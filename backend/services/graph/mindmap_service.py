@@ -1,0 +1,153 @@
+"""
+Mindmap Service - Retrieve graph structure for visualization
+"""
+
+from typing import List, Dict, Any, Tuple
+from neo4j import GraphDatabase
+from config.settings import Settings
+
+
+class MindmapService:
+    """
+    Service to retrieve entire graph structure for a user.
+    """
+    
+    def __init__(self):
+        """Initialize Neo4j connection."""
+        try:
+            self.driver = GraphDatabase.driver(
+                Settings.NEO4J_URI,
+                auth=(Settings.NEO4J_USER, Settings.NEO4J_PASSWORD)
+            )
+            self.driver.verify_connectivity()
+        except Exception as e:
+            print(f"Warning: Could not connect to Neo4j: {e}")
+            self.driver = None
+    
+    def get_user_graph(self, user_id: str) -> Tuple[List[Dict], List[Dict]]:
+        """
+        Get all nodes and relationships for a user.
+        
+        Args:
+            user_id: User identifier
+            
+        Returns:
+            Tuple of (nodes_list, edges_list)
+        """
+        if not self.driver:
+            return [], []
+        
+        nodes = []
+        edges = []
+        
+        try:
+            with self.driver.session() as session:
+                # Get all nodes for user
+                nodes_query = """
+                MATCH (n)
+                WHERE n.user_id = $user_id OR n.id = $user_id
+                RETURN 
+                    id(n) as node_id,
+                    labels(n) as labels,
+                    properties(n) as properties
+                """
+                
+                result = session.run(nodes_query, user_id=user_id)
+                
+                node_id_map = {}  # Map internal Neo4j IDs to our IDs
+                
+                for record in result:
+                    neo4j_id = record["node_id"]
+                    labels = record["labels"]
+                    properties = dict(record["properties"])
+                    
+                    # Get node type (first label)
+                    node_type = labels[0] if labels else "Unknown"
+                    
+                    # Get node ID or generate one
+                    node_id = properties.get("id", f"node_{neo4j_id}")
+                    node_id_map[neo4j_id] = node_id
+                    
+                    # Create label for visualization
+                    if node_type == "User":
+                        label = properties.get("email", "User")
+                    elif node_type == "Asset":
+                        label = properties.get("name", "Asset")
+                    elif node_type == "Goal":
+                        label = properties.get("name", "Goal")
+                    elif node_type == "Transaction":
+                        label = f"Transaction ${properties.get('amount', 0)}"
+                    else:
+                        label = properties.get("name", node_type)
+                    
+                    nodes.append({
+                        "id": node_id,
+                        "type": node_type,
+                        "label": label,
+                        "properties": self._serialize_properties(properties)
+                    })
+                
+                # Get all relationships for user
+                edges_query = """
+                MATCH (a)-[r]->(b)
+                WHERE (a.user_id = $user_id OR a.id = $user_id)
+                AND (b.user_id = $user_id OR b.id = $user_id)
+                RETURN 
+                    id(r) as rel_id,
+                    id(a) as source_id,
+                    id(b) as target_id,
+                    type(r) as rel_type,
+                    properties(r) as properties
+                """
+                
+                result = session.run(edges_query, user_id=user_id)
+                
+                for record in result:
+                    rel_id = record["rel_id"]
+                    source_neo4j_id = record["source_id"]
+                    target_neo4j_id = record["target_id"]
+                    rel_type = record["rel_type"]
+                    properties = dict(record["properties"])
+                    
+                    # Map Neo4j IDs to our node IDs
+                    source_id = node_id_map.get(source_neo4j_id)
+                    target_id = node_id_map.get(target_neo4j_id)
+                    
+                    if source_id and target_id:
+                        edges.append({
+                            "id": f"edge_{rel_id}",
+                            "source": source_id,
+                            "target": target_id,
+                            "type": rel_type,
+                            "label": rel_type.replace("_", " ").title(),
+                            "properties": self._serialize_properties(properties)
+                        })
+        
+        except Exception as e:
+            print(f"Error retrieving mindmap: {e}")
+        
+        return nodes, edges
+    
+    def _serialize_properties(self, properties: Dict[str, Any]) -> Dict[str, Any]:
+        """Serialize Neo4j types to JSON-compatible format."""
+        from neo4j.time import DateTime
+        
+        serialized = {}
+        for key, value in properties.items():
+            if isinstance(value, DateTime):
+                serialized[key] = value.isoformat()
+            elif isinstance(value, (dict, list)):
+                serialized[key] = str(value)
+            else:
+                serialized[key] = value
+        
+        return serialized
+    
+    def close(self):
+        """Close Neo4j connection."""
+        if self.driver:
+            self.driver.close()
+
+
+# Global instance
+mindmap_service = MindmapService()

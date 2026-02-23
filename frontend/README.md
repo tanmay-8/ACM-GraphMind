@@ -1,1 +1,0 @@
-# Graphmind Frontend

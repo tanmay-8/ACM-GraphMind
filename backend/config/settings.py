@@ -1,0 +1,66 @@
+"""
+Application settings and configuration.
+
+Loads environment variables and provides configuration constants.
+"""
+
+import os
+from dotenv import load_dotenv
+from typing import Optional
+
+load_dotenv()
+
+
+class Settings:
+    """Application settings."""
+    
+    # API Settings
+    API_TITLE: str = "GraphMind API"
+    API_DESCRIPTION: str = "Financial Graph Memory RAG System"
+    API_VERSION: str = "1.0.0"
+    API_HOST: str = os.getenv("API_HOST", "0.0.0.0")
+    API_PORT: int = int(os.getenv("API_PORT", "8000"))
+    
+    # LLM Settings
+    GEMINI_API_KEY: Optional[str] = os.getenv("GEMINI_API_KEY")
+    
+    # Neo4j Settings
+    NEO4J_URI: str = os.getenv("NEO4J_URI", "bolt://localhost:7687")
+    NEO4J_USER: str = os.getenv("NEO4J_USER", "neo4j")
+    NEO4J_PASSWORD: str = os.getenv("NEO4J_PASSWORD", "password")
+    
+    # Milvus Settings - TODO: Uncomment when implementing vector retrieval
+    # MILVUS_HOST: str = os.getenv("MILVUS_HOST", "localhost")
+    # MILVUS_PORT: str = os.getenv("MILVUS_PORT", "19530")
+    # MILVUS_COLLECTION: str = os.getenv("MILVUS_COLLECTION", "financial_memory")
+    
+    # Embedding Settings - TODO: Uncomment when implementing vector retrieval
+    # EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+    # EMBEDDING_DIMENSION: int = int(os.getenv("EMBEDDING_DIMENSION", "384"))
+    
+    # Retrieval Settings
+    DEFAULT_TOP_K: int = int(os.getenv("DEFAULT_TOP_K", "5"))
+    MAX_GRAPH_DEPTH: int = int(os.getenv("MAX_GRAPH_DEPTH", "3"))
+    
+    # CORS Settings
+    CORS_ORIGINS: list = os.getenv("CORS_ORIGINS", "*").split(",")
+    
+    @classmethod
+    def validate(cls) -> bool:
+        """
+        Validate that required settings are present.
+        
+        Returns:
+            True if all required settings are configured
+        """
+        required = []
+        
+        # Add warnings for missing optional configs
+        if not cls.GEMINI_API_KEY:
+            print("WARNING: GEMINI_API_KEY not configured. Some features will use fallbacks.")
+        
+        return len(required) == 0
+
+
+# Create global settings instance
+settings = Settings()
