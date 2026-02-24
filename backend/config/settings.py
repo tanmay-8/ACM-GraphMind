@@ -29,6 +29,13 @@ class Settings:
     NEO4J_USER: str = os.getenv("NEO4J_USER", "neo4j")
     NEO4J_PASSWORD: str = os.getenv("NEO4J_PASSWORD", "password")
     
+    # PostgreSQL Settings
+    POSTGRES_HOST: str = os.getenv("POSTGRES_HOST", "localhost")
+    POSTGRES_PORT: int = int(os.getenv("POSTGRES_PORT", "5432"))
+    POSTGRES_DB: str = os.getenv("POSTGRES_DB", "graphmind")
+    POSTGRES_USER: str = os.getenv("POSTGRES_USER", "graphmind_user")
+    POSTGRES_PASSWORD: str = os.getenv("POSTGRES_PASSWORD", "graphmind_pass_2026")
+    
     # Milvus Settings - TODO: Uncomment when implementing vector retrieval
     # MILVUS_HOST: str = os.getenv("MILVUS_HOST", "localhost")
     # MILVUS_PORT: str = os.getenv("MILVUS_PORT", "19530")

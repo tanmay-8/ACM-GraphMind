@@ -50,6 +50,18 @@ export const chatAPI = {
     });
     return response.data;
   },
+
+  getSessions: async () => {
+    const response = await api.get('/sessions');
+    return response.data;
+  },
+
+  getSessionMessages: async (sessionId: string, limit: number = 200, offset: number = 0) => {
+    const response = await api.get(`/sessions/${sessionId}/messages`, {
+      params: { limit, offset },
+    });
+    return response.data;
+  },
 };
 
 // Memory/Mindmap API

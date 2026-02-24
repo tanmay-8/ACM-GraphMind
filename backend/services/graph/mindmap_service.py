@@ -42,10 +42,10 @@ class MindmapService:
         
         try:
             with self.driver.session() as session:
-                # Get all nodes for user
+                # Get all nodes for user (User node + all nodes with user_id)
                 nodes_query = """
                 MATCH (n)
-                WHERE n.user_id = $user_id OR n.id = $user_id
+                WHERE n.user_id = $user_id OR (n:User AND n.id = $user_id)
                 RETURN 
                     id(n) as node_id,
                     labels(n) as labels,
@@ -70,15 +70,22 @@ class MindmapService:
                     
                     # Create label for visualization
                     if node_type == "User":
-                        label = properties.get("email", "User")
+                        label = properties.get("email", properties.get("id", "User"))
+                    elif node_type == "Message":
+                        text = properties.get("text", "")
+                        label = text[:30] + "..." if len(text) > 30 else text
+                    elif node_type == "Fact":
+                        text = properties.get("text", "Fact")
+                        label = text[:35] + "..." if len(text) > 35 else text
                     elif node_type == "Asset":
                         label = properties.get("name", "Asset")
                     elif node_type == "Goal":
                         label = properties.get("name", "Goal")
                     elif node_type == "Transaction":
-                        label = f"Transaction ${properties.get('amount', 0)}"
+                        amount = properties.get("amount", 0)
+                        label = f"₹{amount:,.0f}" if amount else "Transaction"
                     else:
-                        label = properties.get("name", node_type)
+                        label = properties.get("name", properties.get("text", node_type))
                     
                     nodes.append({
                         "id": node_id,
@@ -87,11 +94,11 @@ class MindmapService:
                         "properties": self._serialize_properties(properties)
                     })
                 
-                # Get all relationships for user
+                # Get all relationships for user (only edges between user's nodes)
                 edges_query = """
                 MATCH (a)-[r]->(b)
-                WHERE (a.user_id = $user_id OR a.id = $user_id)
-                AND (b.user_id = $user_id OR b.id = $user_id)
+                WHERE (a.user_id = $user_id OR (a:User AND a.id = $user_id))
+                AND (b.user_id = $user_id OR (b:User AND b.id = $user_id))
                 RETURN 
                     id(r) as rel_id,
                     id(a) as source_id,

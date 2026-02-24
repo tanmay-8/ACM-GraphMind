@@ -45,6 +45,128 @@
     --color-sidebar-ring: var(--sidebar-ring);
 }
 
+/* ─── Light ─────────────────────────────────────────────── */
+:root {
+    --radius: 0.5rem;
+    --background: #ffffff;
+    --foreground: #0d0d10;
+    --card: #f8f8fb;
+    --card-foreground: #0d0d10;
+    --popover: #ffffff;
+    --popover-foreground: #0d0d10;
+    --primary: #4f46e5;
+    --primary-foreground: #ffffff;
+    --secondary: #f1f0f7;
+    --secondary-foreground: #0d0d10;
+    --muted: #f4f4f8;
+    --muted-foreground: #6b6b80;
+    --accent: #ededf8;
+    --accent-foreground: #0d0d10;
+    --destructive: #dc2626;
+    --border: #e5e5ed;
+    --input: #e5e5ed;
+    --ring: #a5b4fc;
+    --sidebar: #f8f8fb;
+    --sidebar-foreground: #0d0d10;
+    --sidebar-primary: #4f46e5;
+    --sidebar-primary-foreground: #ffffff;
+    --sidebar-accent: #ededf8;
+    --sidebar-accent-foreground: #0d0d10;
+    --sidebar-border: #e5e5ed;
+    --sidebar-ring: #a5b4fc;
+}
+
+/* ─── Dark (default for this app) ───────────────────────── */
+.dark, :root {
+    --background: #0d0d10;
+    --foreground: #f0f0f5;
+    --card: #18181d;
+    --card-foreground: #f0f0f5;
+    --popover: #18181d;
+    --popover-foreground: #f0f0f5;
+    --primary: #6366f1;
+    --primary-foreground: #ffffff;
+    --secondary: #232329;
+    --secondary-foreground: #f0f0f5;
+    --muted: #232329;
+    --muted-foreground: #8b8b9e;
+    --accent: #2a2a35;
+    --accent-foreground: #f0f0f5;
+    --destructive: #ef4444;
+    --border: rgba(255,255,255,0.08);
+    --input: rgba(255,255,255,0.07);
+    --ring: #6366f1;
+    --sidebar: #18181d;
+    --sidebar-foreground: #f0f0f5;
+    --sidebar-primary: #6366f1;
+    --sidebar-primary-foreground: #ffffff;
+    --sidebar-accent: #2a2a35;
+    --sidebar-accent-foreground: #f0f0f5;
+    --sidebar-border: rgba(255,255,255,0.08);
+    --sidebar-ring: #6366f1;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+  /* Smooth scrollbar */
+  * { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.1) transparent; }
+}
+
+/* ─── Utility: glass surface ────────────────────────────── */
+.glass {
+  background: rgba(255,255,255,0.03);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255,255,255,0.07);
+}
+
+
+@theme inline {
+    --radius-sm: calc(var(--radius) - 4px);
+    --radius-md: calc(var(--radius) - 2px);
+    --radius-lg: var(--radius);
+    --radius-xl: calc(var(--radius) + 4px);
+    --radius-2xl: calc(var(--radius) + 8px);
+    --radius-3xl: calc(var(--radius) + 12px);
+    --radius-4xl: calc(var(--radius) + 16px);
+    --color-background: var(--background);
+    --color-foreground: var(--foreground);
+    --color-card: var(--card);
+    --color-card-foreground: var(--card-foreground);
+    --color-popover: var(--popover);
+    --color-popover-foreground: var(--popover-foreground);
+    --color-primary: var(--primary);
+    --color-primary-foreground: var(--primary-foreground);
+    --color-secondary: var(--secondary);
+    --color-secondary-foreground: var(--secondary-foreground);
+    --color-muted: var(--muted);
+    --color-muted-foreground: var(--muted-foreground);
+    --color-accent: var(--accent);
+    --color-accent-foreground: var(--accent-foreground);
+    --color-destructive: var(--destructive);
+    --color-border: var(--border);
+    --color-input: var(--input);
+    --color-ring: var(--ring);
+    --color-chart-1: var(--chart-1);
+    --color-chart-2: var(--chart-2);
+    --color-chart-3: var(--chart-3);
+    --color-chart-4: var(--chart-4);
+    --color-chart-5: var(--chart-5);
+    --color-sidebar: var(--sidebar);
+    --color-sidebar-foreground: var(--sidebar-foreground);
+    --color-sidebar-primary: var(--sidebar-primary);
+    --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+    --color-sidebar-accent: var(--sidebar-accent);
+    --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+    --color-sidebar-border: var(--sidebar-border);
+    --color-sidebar-ring: var(--sidebar-ring);
+}
+
 :root {
     --radius: 0.625rem;
     --background: oklch(1 0 0);

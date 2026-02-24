@@ -41,77 +41,112 @@ class RetrievalOrchestrator:
             query: User's question
             
         Returns:
-            Tuple of (answer, metrics, sources)
+            Tuple of (answer, metrics, memory_citations)
         """
-        # Step 1: Retrieve from graph
-        graph_context, graph_time = self.graph_retrieval.retrieve(
+        # Step 1: Retrieve from graph (with timing)
+        graph_start = time.time()
+        graph_context, _ = self.graph_retrieval.retrieve(
             user_id=user_id,
             query=query,
-            max_depth=2  # Adaptive based on query complexity
+            max_depth=3  # Adaptive based on query mode
         )
+        graph_query_ms = (time.time() - graph_start) * 1000
         
-        # TODO: Step 2 - Vector retrieval (when implemented)
-        # query_embedding = self.embedding_service.embed_text(query)
-        # vector_context, vector_time = self.vector_retrieval.retrieve(
-        #     user_id=user_id,
-        #     query_embedding=query_embedding,
-        #     top_k=5
-        # )
+        # Step 2: Vector retrieval (placeholder for future)
+        vector_search_ms = 0.0
         vector_context = []
-        vector_time = 0.0
         
-        # Step 3: Generate answer using graph context (with timing)
+        # Step 3: Assemble context (with timing)
+        context_start = time.time()
+        # Format graph context for LLM
+        formatted_context = graph_context  # Already formatted by retrieval service
+        context_assembly_ms = (time.time() - context_start) * 1000
+        
+        # Step 4: Generate answer using LLM (with timing)
         llm_start = time.time()
         answer = self.answer_generator.generate(
             query=query,
-            graph_context=graph_context,
+            graph_context=formatted_context,
             vector_context=vector_context
         )
-        llm_time_ms = (time.time() - llm_start) * 1000
+        llm_generation_ms = (time.time() - llm_start) * 1000
         
-        # Step 4: Assemble metrics
+        # Step 5: Assemble detailed metrics
+        retrieval_ms = graph_query_ms + vector_search_ms + context_assembly_ms
+        
         metrics = {
-            "retrieval_ms": graph_time + vector_time,
-            "llm_generation_ms": llm_time_ms
+            "graph_query_ms": round(graph_query_ms, 2),
+            "vector_search_ms": round(vector_search_ms, 2),
+            "context_assembly_ms": round(context_assembly_ms, 2),
+            "retrieval_ms": round(retrieval_ms, 2),
+            "llm_generation_ms": round(llm_generation_ms, 2)
         }
         
-        # Step 5: Format sources for explainability
-        sources = self._format_sources(graph_context, vector_context)
+        # Step 6: Format memory citations with scores
+        memory_citations = self._format_memory_citations(formatted_context)
         
-        return answer, metrics, sources
+        # Step 7: DEFERRED REINFORCEMENT - Update cited nodes after answer generation
+        cited_node_ids = [node["properties"]["id"] for node in formatted_context[:10] 
+                         if "properties" in node and "id" in node["properties"]]
+        if cited_node_ids:
+            self.graph_retrieval.reinforce_cited_nodes(user_id, cited_node_ids)
+        
+        return answer, metrics, memory_citations
     
-    def _format_sources(
+    def _format_memory_citations(
         self, 
-        graph_context: List[Dict[str, Any]], 
-        vector_context: List[Dict[str, Any]]
+        graph_context: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
         """
-        Format source nodes for explainability.
+        Format memory citations with retrieval scores for explainability.
         
         Args:
-            graph_context: Retrieved graph nodes
-            vector_context: Retrieved vector chunks (currently unused)
+            graph_context: Retrieved graph nodes with scores
             
         Returns:
-            List of formatted source nodes
+            List of formatted memory citations with snippets and hop distance
         """
-        sources = []
+        citations = []
         
-        # Add graph nodes as sources
-        for node in graph_context[:5]:  # Limit to top 5
-            sources.append({
-                "node_type": node.get("type", "Unknown"),
-                "properties": node.get("properties", {})
-            })
+        # Add graph nodes as citations with scores (top 10)
+        for node in graph_context[:10]:
+            node_type = node.get("type", "Unknown")
+            props = node.get("properties", {})
+            score = node.get("retrieval_score", 0.0)
+            snippet = node.get("snippet", "")
+            hop_distance = node.get("score_breakdown", {}).get("hop_distance", "N/A")
+            
+            citation = {
+                "node_type": node_type,
+                "retrieval_score": score,
+                "hop_distance": hop_distance,
+                "snippet": snippet,
+                "properties": {},
+                "score_breakdown": node.get("score_breakdown", None)
+            }
+            
+            # Include relevant properties based on node type
+            if node_type == "Fact":
+                citation["properties"] = {
+                    "text": props.get("text", ""),
+                    "confidence": props.get("confidence", 0.0),
+                    "reinforcement_count": props.get("reinforcement_count", 0)
+                }
+            elif node_type == "Transaction":
+                citation["properties"] = {
+                    "amount": props.get("amount", 0),
+                    "transaction_type": props.get("transaction_type", ""),
+                    "confidence": props.get("confidence", 0.0)
+                }
+            elif node_type in ["Asset", "Goal", "Entity"]:
+                citation["properties"] = {
+                    k: v for k, v in props.items() 
+                    if k in ["name", "text", "confidence", "id"]
+                }
+            
+            citations.append(citation)
         
-        # TODO: Add vector chunks when vector retrieval is implemented
-        # for chunk in vector_context[:3]:
-        #     sources.append({
-        #         "node_type": "TextMemory",
-        #         "properties": {"text": chunk.get("text", "")}
-        #     })
-        
-        return sources
+        return citations
     
     def close(self):
         """Close all service connections."""

@@ -34,21 +34,25 @@ class MemoryOrchestrator:
         """
         # Step 1: Extract structured data from text
         extracted_data = self.extractor.extract(message, user_id)
+        facts = extracted_data.get("facts", [])
         nodes = extracted_data.get("nodes", [])
         relationships = extracted_data.get("relationships", [])
         
-        # Step 2: Ingest into graph
+        # Step 2: Ingest into graph (Message + Facts + Entities)
         graph_result = self.graph_ingestion.ingest_memory(
             user_id=user_id,
+            message_text=message,
+            facts=facts,
             nodes=nodes,
             relationships=relationships
         )
         
-        # TODO : implement vector ingestion for extracted entities if needed
+        # TODO: Implement vector ingestion for semantic search if needed
         
         return {
             "nodes_created": graph_result.get("nodes_created", 0),
             "relationships_created": graph_result.get("relationships_created", 0),
+            "facts_created": graph_result.get("facts_created", 0),
             "chunks_indexed": 0  # No vector indexing in current implementation
         }
     

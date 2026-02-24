@@ -1,14 +1,14 @@
 """
-Authentication Service - User management and JWT tokens
+Authentication Service - User management and JWT tokens with PostgreSQL
 """
 
 import os
-import hashlib
 import secrets
 from datetime import datetime, timedelta
 from typing import Optional, Dict
 from jose import JWTError, jwt
 from dotenv import load_dotenv
+from services.database.user_service import UserService
 
 load_dotenv()
 
@@ -16,49 +16,34 @@ load_dotenv()
 class AuthService:
     """Handle user authentication and JWT token management."""
     
-    # In-memory user storage (replace with database in production)
-    users_db: Dict[str, Dict] = {}
-    
     def __init__(self):
         """Initialize auth service."""
         self.secret_key = os.getenv("JWT_SECRET_KEY", secrets.token_urlsafe(32))
         self.algorithm = "HS256"
         self.access_token_expire_minutes = 60 * 24 * 7  # 7 days
-    
-    def hash_password(self, password: str) -> str:
-        """Hash password using SHA-256."""
-        return hashlib.sha256(password.encode()).hexdigest()
-    
-    def verify_password(self, plain_password: str, hashed_password: str) -> bool:
-        """Verify password against hash."""
-        return self.hash_password(plain_password) == hashed_password
+        self.user_service = UserService()
     
     def create_user(self, email: str, password: str, full_name: str) -> Optional[Dict]:
         """
-        Create a new user.
+        Create a new user in PostgreSQL.
         
         Returns:
             User dict if successful, None if email already exists
         """
-        if email in self.users_db:
+        try:
+            user = self.user_service.create_user(email, password, full_name)
+            if user:
+                return {
+                    "user_id": str(user["id"]),
+                    "neo4j_user_id": user["neo4j_user_id"],
+                    "email": user["email"],
+                    "full_name": user["full_name"],
+                    "created_at": user["created_at"].isoformat() if user["created_at"] else None
+                }
             return None
-        
-        user_id = f"user_{secrets.token_hex(8)}"
-        user = {
-            "user_id": user_id,
-            "email": email,
-            "password_hash": self.hash_password(password),
-            "full_name": full_name,
-            "created_at": datetime.utcnow().isoformat()
-        }
-        
-        self.users_db[email] = user
-        return {
-            "user_id": user_id,
-            "email": email,
-            "full_name": full_name,
-            "created_at": user["created_at"]
-        }
+        except Exception as e:
+            print(f"Error creating user: {e}")
+            return None
     
     def authenticate_user(self, email: str, password: str) -> Optional[Dict]:
         """
@@ -67,25 +52,41 @@ class AuthService:
         Returns:
             User dict if successful, None if authentication fails
         """
-        user = self.users_db.get(email)
+        user = self.user_service.get_user_by_email(email)
         if not user:
             return None
         
-        if not self.verify_password(password, user["password_hash"]):
+        if not self.user_service.verify_password(password, user["hashed_password"]):
             return None
         
+        # Update last login
+        self.user_service.update_last_login(str(user["id"]))
+        
         return {
-            "user_id": user["user_id"],
+            "user_id": str(user["id"]),
+            "neo4j_user_id": user["neo4j_user_id"],
             "email": user["email"],
             "full_name": user["full_name"]
         }
+    
+    def get_user_by_id(self, user_id: str) -> Optional[Dict]:
+        """Get user by PostgreSQL UUID."""
+        user = self.user_service.get_user_by_id(user_id)
+        if user:
+            return {
+                "user_id": str(user["id"]),
+                "neo4j_user_id": user["neo4j_user_id"],
+                "email": user["email"],
+                "full_name": user["full_name"]
+            }
+        return None
     
     def create_access_token(self, user_id: str, email: str) -> str:
         """
         Create JWT access token.
         
         Args:
-            user_id: User's unique identifier
+            user_id: User's PostgreSQL UUID
             email: User's email
             
         Returns:

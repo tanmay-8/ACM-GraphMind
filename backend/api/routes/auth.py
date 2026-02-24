@@ -134,8 +134,8 @@ async def get_current_user(authorization: Optional[str] = Header(None)):
             headers={"WWW-Authenticate": "Bearer"}
         )
     
-    # Get user from database
-    user = auth_service.users_db.get(payload["email"])
+    # Get user from PostgreSQL
+    user = auth_service.get_user_by_id(payload["user_id"])
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -146,5 +146,5 @@ async def get_current_user(authorization: Optional[str] = Header(None)):
         user_id=user["user_id"],
         email=user["email"],
         full_name=user["full_name"],
-        created_at=user["created_at"]
+        created_at=user.get("created_at")
     )

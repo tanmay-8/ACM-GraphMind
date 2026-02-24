@@ -1,152 +1,274 @@
--- GraphMind Financial Knowledge Graph Schema
--- Neo4j Cypher Schema Definition
+// ======================================================
+// GRAPHMIND - USER SCOPED MEMORY GRAPH SCHEMA
+// Production Ready - Hybrid Graph + RAG Architecture
+// ======================================================
 
--- ============================================
--- CONSTRAINTS & INDEXES
--- ============================================
 
--- User Node Constraints
+
+// ======================================================
+// 1. USER CONSTRAINT
+// ======================================================
+
 CREATE CONSTRAINT user_id_unique IF NOT EXISTS
-FOR (u:User) REQUIRE u.id IS UNIQUE;
+FOR (u:User)
+REQUIRE u.id IS UNIQUE;
 
-CREATE INDEX user_id_index IF NOT EXISTS
-FOR (u:User) ON (u.id);
 
--- Asset Node Constraints
-CREATE CONSTRAINT asset_id_unique IF NOT EXISTS
-FOR (a:Asset) REQUIRE a.id IS UNIQUE;
 
-CREATE INDEX asset_name_index IF NOT EXISTS
-FOR (a:Asset) ON (a.name);
+// ======================================================
+// 2. CORE MEMORY NODE CONSTRAINTS
+// ======================================================
 
-CREATE INDEX asset_user_index IF NOT EXISTS
-FOR (a:Asset) ON (a.user_id);
+CREATE CONSTRAINT message_id_unique IF NOT EXISTS
+FOR (m:Message)
+REQUIRE m.id IS UNIQUE;
 
--- Goal Node Constraints
+CREATE CONSTRAINT fact_id_unique IF NOT EXISTS
+FOR (f:Fact)
+REQUIRE f.id IS UNIQUE;
+
+CREATE CONSTRAINT entity_user_unique IF NOT EXISTS
+FOR (e:Entity)
+REQUIRE (e.user_id, e.name) IS UNIQUE;
+
+CREATE CONSTRAINT preference_id_unique IF NOT EXISTS
+FOR (p:Preference)
+REQUIRE p.id IS UNIQUE;
+
 CREATE CONSTRAINT goal_id_unique IF NOT EXISTS
-FOR (g:Goal) REQUIRE g.id IS UNIQUE;
+FOR (g:Goal)
+REQUIRE g.id IS UNIQUE;
 
-CREATE INDEX goal_user_index IF NOT EXISTS
-FOR (g:Goal) ON (g.user_id);
+CREATE CONSTRAINT event_id_unique IF NOT EXISTS
+FOR (ev:Event)
+REQUIRE ev.id IS UNIQUE;
 
--- Transaction Node Constraints
-CREATE CONSTRAINT transaction_id_unique IF NOT EXISTS
-FOR (t:Transaction) REQUIRE t.id IS UNIQUE;
+CREATE CONSTRAINT chunk_id_unique IF NOT EXISTS
+FOR (c:DocumentChunk)
+REQUIRE c.id IS UNIQUE;
 
-CREATE INDEX transaction_date_index IF NOT EXISTS
-FOR (t:Transaction) ON (t.date);
 
-CREATE INDEX transaction_user_index IF NOT EXISTS
-FOR (t:Transaction) ON (t.user_id);
 
--- RiskProfile Node Constraints
-CREATE CONSTRAINT risk_profile_id_unique IF NOT EXISTS
-FOR (r:RiskProfile) REQUIRE r.id IS UNIQUE;
+// ======================================================
+// 3. INDEXES FOR FAST RETRIEVAL
+// ======================================================
 
--- Indexes for Reinforcement Learning
-CREATE INDEX last_reinforced_index IF NOT EXISTS
-FOR (n:Asset) ON (n.last_reinforced);
+CREATE INDEX entity_name_index IF NOT EXISTS
+FOR (e:Entity)
+ON (e.name);
+
+CREATE INDEX fact_text_index IF NOT EXISTS
+FOR (f:Fact)
+ON (f.text);
+
+CREATE INDEX timestamp_index IF NOT EXISTS
+FOR (n)
+ON (n.timestamp);
+
+CREATE INDEX reinforcement_index IF NOT EXISTS
+FOR (n)
+ON (n.last_reinforced);
 
 CREATE INDEX confidence_index IF NOT EXISTS
-FOR (n:Asset) ON (n.confidence);
+FOR (n)
+ON (n.confidence);
 
--- ============================================
--- REINFORCEMENT LEARNING MECHANISM
--- ============================================
 
--- Memory Reinforcement Strategy:
--- 1. ON CREATE: All nodes get confidence=0.8, last_reinforced=now()
--- 2. ON RETRIEVAL: When nodes are accessed, last_reinforced is updated to now()
--- 3. FUTURE: Nodes with recent last_reinforced timestamps get higher priority
--- 4. FUTURE: Frequently accessed nodes can have confidence boosted over time
---
--- Benefits:
--- - Tracks which information is frequently accessed
--- - Enables temporal decay of unused memories
--- - Supports adaptive retrieval based on usage patterns
--- - Qualifies for reinforcement learning memory stretch goal
 
--- ============================================
--- NODE TYPES SCHEMA
--- ============================================
+// ======================================================
+// 4. MEMORY NODE DEFINITIONS (PROPERTY REFERENCE)
+// ======================================================
 
--- ALL NODES INCLUDE METADATA FOR REINFORCEMENT LEARNING:
--- - timestamp: DateTime of when the node was created
--- - source_type: Source of the information (e.g., "user_input", "inference")
--- - confidence: Confidence score (0.0 to 1.0, default: 0.8)
--- - last_reinforced: DateTime of when the node was last retrieved/accessed
--- - created_at: DateTime of node creation
--- - updated_at: DateTime of last update
+/*
 
--- User
--- Properties: id, name, email, created_at
+---------------------------
+User
+---------------------------
+(:User {
+    id: STRING,
+    name: STRING,
+    email: STRING,
+    created_at: DATETIME
+})
 
--- Asset
--- Properties: id, name, asset_type, current_value, user_id, 
---            timestamp, source_type, confidence, last_reinforced, created_at
--- Types: mutual_fund, stock, bond, real_estate, gold, etc.
+---------------------------
+Message (Raw Chat Storage)
+---------------------------
+(:Message {
+    id: STRING,
+    text: STRING,
+    timestamp: DATETIME,
+    source_type: "chat" | "upload",
+    created_at: DATETIME
+})
 
--- Goal
--- Properties: id, name, goal_type, target_amount, target_date, user_id,
---            timestamp, source_type, confidence, last_reinforced, created_at
--- Types: retirement, education, house, emergency_fund, etc.
+---------------------------
+Fact (Atomic Memory Unit)
+---------------------------
+(:Fact {
+    id: STRING,
+    text: STRING,
+    confidence: FLOAT,
+    reinforcement_score: FLOAT,
+    timestamp: DATETIME,
+    last_reinforced: DATETIME,
+    created_at: DATETIME,
+    updated_at: DATETIME
+})
 
--- Transaction
--- Properties: id, amount, transaction_type, date, description, user_id,
---            timestamp, source_type, confidence, last_reinforced, created_at
--- Types: investment, withdrawal, dividend, etc.
+---------------------------
+Entity (Generic Concept Node)
+---------------------------
+(:Entity {
+    name: STRING,
+    entity_type: STRING,      // person | org | financial_asset | concept | etc.
+    user_id: STRING,
+    confidence: FLOAT,
+    timestamp: DATETIME,
+    last_reinforced: DATETIME
+})
 
--- RiskProfile
--- Properties: id, risk_level, risk_score, user_id,
---            timestamp, source_type, confidence, last_reinforced, created_at
--- Levels: low, moderate, high
+---------------------------
+Preference
+---------------------------
+(:Preference {
+    id: STRING,
+    text: STRING,
+    confidence: FLOAT,
+    timestamp: DATETIME,
+    last_reinforced: DATETIME
+})
 
--- ============================================
--- RELATIONSHIP TYPES
--- ============================================
+---------------------------
+Goal
+---------------------------
+(:Goal {
+    id: STRING,
+    name: STRING,
+    target_amount: FLOAT,
+    target_date: DATE,
+    confidence: FLOAT,
+    timestamp: DATETIME,
+    last_reinforced: DATETIME
+})
 
--- (User)-[:OWNS]->(Asset)
--- (User)-[:HAS_GOAL]->(Goal)
--- (User)-[:MADE_TRANSACTION]->(Transaction)
--- (User)-[:HAS_RISK_PROFILE]->(RiskProfile)
--- (Transaction)-[:AFFECTS_ASSET]->(Asset)
--- (Asset)-[:CONTRIBUTES_TO]->(Goal)
--- (Asset)-[:HAS_RISK]->(RiskProfile)
+---------------------------
+Event
+---------------------------
+(:Event {
+    id: STRING,
+    name: STRING,
+    event_date: DATE,
+    confidence: FLOAT,
+    timestamp: DATETIME,
+    last_reinforced: DATETIME
+})
 
--- ============================================
--- SAMPLE DATA STRUCTURE
--- ============================================
+---------------------------
+DocumentChunk (Hybrid RAG)
+---------------------------
+(:DocumentChunk {
+    id: STRING,
+    text: STRING,
+    embedding_id: STRING,     // Milvus vector reference
+    confidence: FLOAT,
+    timestamp: DATETIME,
+    last_reinforced: DATETIME
+})
 
--- Example User:
--- (:User {id: "u123", name: "John Doe", created_at: datetime()})
+*/
 
--- Example Asset:
--- (:Asset {
---   id: "a123",
---   name: "HDFC Mutual Fund",
---   asset_type: "mutual_fund",
---   current_value: 50000,
---   user_id: "u123",
---   timestamp: datetime(),
---   source_type: "user_input",
---   confidence: 0.8,
---   last_reinforced: datetime(),
---   created_at: datetime(),
---   updated_at: datetime()
--- })
 
--- Example Goal:
--- (:Goal {
---   id: "g123",
---   name: "Retirement",
---   goal_type: "retirement",
---   target_amount: 10000000,
---   target_date: date("2050-01-01"),
---   user_id: "u123",
---   timestamp: datetime(),
---   source_type: "user_input",
---   confidence: 0.8,
---   last_reinforced: datetime(),
---   created_at: datetime(),
---   updated_at: datetime()
--- })
+
+// ======================================================
+// 5. RELATIONSHIP TYPES
+// ======================================================
+
+/*
+
+---------------------------
+USER ISOLATION ROOT
+---------------------------
+(User)-[:OWNS_MEMORY]->(Message)
+(User)-[:OWNS_MEMORY]->(Fact)
+(User)-[:OWNS_MEMORY]->(Entity)
+(User)-[:OWNS_MEMORY]->(Preference)
+(User)-[:OWNS_MEMORY]->(Goal)
+(User)-[:OWNS_MEMORY]->(Event)
+(User)-[:OWNS_MEMORY]->(DocumentChunk)
+
+⚠ ALL RETRIEVAL MUST START FROM:
+MATCH (u:User {id:$user_id})-[:OWNS_MEMORY]->(...)
+
+This guarantees strict user isolation.
+
+---------------------------
+INGESTION RELATIONS
+---------------------------
+(Message)-[:DERIVED_FROM]->(Fact)
+(Fact)-[:RELATES_TO]->(Entity)
+(DocumentChunk)-[:MENTIONS]->(Entity)
+
+---------------------------
+USER BEHAVIOR RELATIONS
+---------------------------
+(User)-[:PREFERS]->(Preference)
+(User)-[:WORKS_ON]->(Goal)
+(User)-[:PARTICIPATES_IN]->(Event)
+
+---------------------------
+KNOWLEDGE RELATIONS
+---------------------------
+(Fact)-[:CONFIRMS]->(Fact)
+(Fact)-[:CONTRADICTS]->(Fact)
+(Entity)-[:RELATED_TO]->(Entity)
+
+*/
+
+
+
+// ======================================================
+// 6. REINFORCEMENT MECHANISM LOGIC
+// ======================================================
+
+/*
+
+ON CREATE:
+    confidence = 0.8
+    reinforcement_score = 1.0
+    last_reinforced = datetime()
+
+ON RETRIEVAL:
+    SET n.last_reinforced = datetime(),
+        n.reinforcement_score = n.reinforcement_score + 0.05
+
+OPTIONAL MEMORY DECAY JOB:
+    MATCH (n)
+    SET n.reinforcement_score = n.reinforcement_score * 0.98
+
+Retrieval ordering:
+    ORDER BY n.reinforcement_score DESC, n.confidence DESC
+
+*/
+
+
+
+// ======================================================
+// 7. SAMPLE SAFE RETRIEVAL QUERY TEMPLATE
+// ======================================================
+
+/*
+
+MATCH (u:User {id:$user_id})-[:OWNS_MEMORY]->(f:Fact)
+WHERE f.text CONTAINS $query
+OPTIONAL MATCH (f)-[:RELATES_TO]->(e:Entity)
+RETURN f, e
+ORDER BY f.reinforcement_score DESC
+LIMIT 10
+
+*/
+
+
+// ======================================================
+// END OF GRAPHMIND SCHEMA
+// ======================================================

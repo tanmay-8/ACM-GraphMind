@@ -114,16 +114,6 @@ class GraphRetrieval:
         
         return retrieved_nodes, retrieval_time_ms
     
-    def _serialize_neo4j_types(self, obj: Any) -> Any:
-        """Convert Neo4j types to JSON-serializable Python types."""
-        if isinstance(obj, DateTime):
-            return obj.isoformat()
-        elif isinstance(obj, dict):
-            return {k: self._serialize_neo4j_types(v) for k, v in obj.items()}
-        elif isinstance(obj, (list, tuple)):
-            return [self._serialize_neo4j_types(item) for item in obj]
-        else:
-            return obj
     
     def _execute_mode_based_retrieval(
         self,
@@ -156,7 +146,6 @@ class GraphRetrieval:
             OPTIONAL MATCH (m)-[:DERIVED_FACT]->(f:Fact)
             WITH u, collect(DISTINCT m) + collect(DISTINCT t) + collect(DISTINCT a) + collect(DISTINCT f) as nodes
             UNWIND nodes as n
-            WITH n
             WHERE n IS NOT NULL {timeline_filter}
             RETURN DISTINCT n
             LIMIT 50
@@ -174,7 +163,6 @@ class GraphRetrieval:
             WHERE f.user_id = $user_id
             WITH collect(DISTINCT t) + collect(DISTINCT a) + collect(DISTINCT f) as nodes
             UNWIND nodes as n
-            WITH n
             WHERE n IS NOT NULL
             RETURN DISTINCT n
             LIMIT 100
@@ -197,7 +185,6 @@ class GraphRetrieval:
             WITH collect(DISTINCT t) + collect(DISTINCT a) + collect(DISTINCT g) + 
                  collect(DISTINCT p) + collect(DISTINCT f) + collect(DISTINCT f2) as nodes
             UNWIND nodes as n
-            WITH n
             WHERE n IS NOT NULL
             RETURN DISTINCT n
             LIMIT 150
@@ -225,8 +212,8 @@ class GraphRetrieval:
                     "neo4j_id": node.id  # Store Neo4j internal ID for hop calculation
                 })
         
-        print(f"[DEBUG] Mode: {mode.value}, Retrieved {len(nodes)} nodes")
         return nodes
+    
     
     def _calculate_hop_distances(
         self,
@@ -264,152 +251,156 @@ class GraphRetrieval:
             node["hop_distance"] = hops
             nodes_with_hops.append(node)
         
-        print(f"[DEBUG] Calculated hops for {len(nodes_with_hops)}/{len(nodes)} nodes")
         return nodes_with_hops
+        """Convert Neo4j types to JSON-serializable Python types."""
+        if isinstance(obj, DateTime):
+            return obj.isoformat()
+        elif isinstance(obj, dict):
+            return {k: self._serialize_neo4j_types(v) for k, v in obj.items()}
+        elif isinstance(obj, (list, tuple)):
+            return [self._serialize_neo4j_types(item) for item in obj]
+        else:
+            return obj
     
-    def _score_and_rank_nodes(
-        self, 
-        nodes: List[Dict[str, Any]], 
-        query: str
-    ) -> List[Dict[str, Any]]:
+    def _format_results(self, result) -> List[Dict[str, Any]]:
         """
-        Score and rank nodes using normalized multi-factor scoring.
+        Format Neo4j results into structured dictionaries.
+        """
+        formatted_nodes = []
         
-        New Formula (all components normalized 0-1):
-        score = w_graph × graph_score + 
-                w_recency × recency_score + 
-                w_confidence × confidence +
-                w_reinforcement × reinforcement_score
+        try:
+            for record in result:
+                # User node
+                user_node = record.get("u")
+                if user_node:
+                    formatted_nodes.append({
+                        "type": list(user_node.labels)[0] if user_node.labels else "User",
+                        "properties": self._serialize_neo4j_types(dict(user_node))
+                    })
+                
+                # Connected nodes
+                nodes = record.get("nodes", [])
+                for node in nodes:
+                    if node:  # Skip None values
+                        formatted_nodes.append({
+                            "type": list(node.labels)[0] if node.labels else "Entity",
+                            "properties": self._serialize_neo4j_types(dict(node))
+                        })
+                
+                # Relationships (stored in node context)
+                rels = record.get("rels", [])
+                for rel_list in rels:
+                    if rel_list:  # rel_list might be a list of relationships
+                        # Handle case where rels is a list of relationship lists
+                        if isinstance(rel_list, list):
+                            for rel in rel_list:
+                                if rel:
+                                    formatted_nodes.append({
+                                        "type": "Relationship",
+                                        "relationship_type": rel.type,
+                                        "properties": self._serialize_neo4j_types(dict(rel))
+                                    })
+                        elif hasattr(rel_list, 'type'):  # Single relationship
+                            formatted_nodes.append({
+                                "type": "Relationship",
+                                "relationship_type": rel_list.type,
+                                "properties": self._serialize_neo4j_types(dict(rel_list))
+                            })
         
-        Where:
-        - graph_score = 1 / (hops + 1)
-        - recency_score = exp(-λ × days_ago)
-        - confidence = node.confidence
-        - reinforcement_score = min(1, log(1 + count) / log(10))
+        except Exception as e:
+            print(f"Error formatting results: {e}")
+        
+        return formatted_nodes
+    
+    def _determine_query_depth(self, query: str) -> int:
+        """
+        Determine retrieval depth based on query complexity.
+        
+        Simple (1 hop): "What assets do I own?"
+        Complex (2-3 hops): "Am I aligned with my retirement goal?"
+        """
+        query_lower = query.lower()
+        
+        # Keywords indicating complex multi-hop reasoning
+        complex_keywords = [
+            "aligned", "compare", "why", "how am i", "goal",
+            "progress", "relationship", "between", "impact",
+            "affect", "contributing", "towards"
+        ]
+        
+        # Very complex queries need deeper traversal
+        very_complex_keywords = [
+            "overall", "portfolio", "all", "total", "complete",
+            "entire", "comprehensive"
+        ]
+        
+        if any(keyword in query_lower for keyword in very_complex_keywords):
+            return 3  # Very complex query
+        elif any(keyword in query_lower for keyword in complex_keywords):
+            return 2  # Complex query
+        else:
+            return 1  # Simple query
+    
+    def _score_and_rank_nodes(self, nodes: List[Dict[str, Any]], query: str, depth: int) -> List[Dict[str, Any]]:
+        """
+        Score and rank retrieved nodes based on multiple factors.
+        
+        Scoring formula:
+        final_score = 0.4 * graph_distance_score + 
+                     0.3 * recency_score + 
+                     0.2 * confidence + 
+                     0.1 * reinforcement_score
         """
         scored_nodes = []
         now = datetime.now(timezone.utc)
         
         for node in nodes:
             props = node.get("properties", {})
-            node_type = node.get("type", "Unknown")
             
             # Skip User nodes from ranking
-            if node_type == "User":
+            if node.get("type") == "User":
                 continue
             
-            # 1. Graph Distance Score (inverse of hops)
-            hops = node.get("hop_distance", 3)
-            graph_score = 1.0 / (hops + 1)
+            # Graph distance score (inverse of depth, normalized)
+            # Closer nodes get higher score
+            graph_distance_score = 1.0 / (depth + 1)
             
-            # 2. Recency Score (exponential decay)
-            recency_score = 0.5  # Default
+            # Recency score (based on last_reinforced)
+            recency_score = 0.5
             last_reinforced = props.get("last_reinforced")
             if last_reinforced:
                 if isinstance(last_reinforced, str):
                     try:
-                        last_dt = datetime.fromisoformat(last_reinforced.replace("Z", "+00:00"))
-                        days_ago = (now - last_dt).total_seconds() / 86400  # Days as float
-                        recency_score = math.exp(-self.RECENCY_DECAY_LAMBDA * days_ago)
+                        last_reinforced_dt = datetime.fromisoformat(last_reinforced.replace("Z", "+00:00"))
+                        days_ago = (now - last_reinforced_dt).days
+                        # Exponential decay: nodes accessed recently score higher
+                        recency_score = max(0.1, 1.0 / (1 + days_ago * 0.1))
                     except:
                         pass
             
-            # 3. Confidence Score (already normalized 0-1)
+            # Confidence score
             confidence = float(props.get("confidence", 0.5))
             
-            # 4. Reinforcement Score (logarithmic scaling)
+            # Reinforcement score (normalized)
             reinforcement_count = int(props.get("reinforcement_count", 0))
-            if reinforcement_count > 0:
-                reinforcement_score = min(1.0, math.log(1 + reinforcement_count) / math.log(10))
-            else:
-                reinforcement_score = 0.0
+            reinforcement_score = min(1.0, reinforcement_count / 10.0)  # Cap at 10 accesses
             
-            # Calculate weighted final score
+            # Calculate final score
             final_score = (
-                self.SCORE_WEIGHTS["graph_distance"] * graph_score +
-                self.SCORE_WEIGHTS["recency"] * recency_score +
-                self.SCORE_WEIGHTS["confidence"] * confidence +
-                self.SCORE_WEIGHTS["reinforcement"] * reinforcement_score
+                0.4 * graph_distance_score +
+                0.3 * recency_score +
+                0.2 * confidence +
+                0.1 * reinforcement_score
             )
             
-            # Add scoring details to node
+            # Add score to node
             node["retrieval_score"] = round(final_score, 3)
-            node["score_breakdown"] = {
-                "graph_distance": round(graph_score, 3),
-                "recency": round(recency_score, 3),
-                "confidence": round(confidence, 3),
-                "reinforcement": round(reinforcement_score, 3),
-                "hop_distance": hops
-            }
-            
-            # Add snippet for explainability
-            node["snippet"] = self._create_snippet(node_type, props)
-            
             scored_nodes.append(node)
         
         # Sort by score descending
         scored_nodes.sort(key=lambda x: x.get("retrieval_score", 0), reverse=True)
         
-        print(f"[DEBUG] Scored and ranked {len(scored_nodes)} nodes (top score: {scored_nodes[0]['retrieval_score'] if scored_nodes else 'N/A'})")
         return scored_nodes
-    
-    def _create_snippet(self, node_type: str, props: Dict[str, Any]) -> str:
-        """Create human-readable snippet for node."""
-        if node_type == "Transaction":
-            amount = props.get("amount", 0)
-            tx_type = props.get("transaction_type", "transaction")
-            return f"{tx_type.capitalize()} of ₹{amount:,.0f}"
-        
-        elif node_type == "Asset":
-            name = props.get("name", "Unknown")
-            asset_type = props.get("asset_type", "asset")
-            return f"{name} ({asset_type})"
-        
-        elif node_type == "Fact":
-            text = props.get("text", "")
-            return text[:60] + "..." if len(text) > 60 else text
-        
-        elif node_type == "Goal":
-            name = props.get("name", "Unknown goal")
-            return f"Goal: {name}"
-        
-        elif node_type == "Message":
-            text = props.get("text", "")
-            return text[:50] + "..." if len(text) > 50 else text
-        
-        else:
-            return props.get("name", props.get("text", node_type))
-    
-    def reinforce_cited_nodes(self, user_id: str, node_ids: List[str]):
-        """
-        Update reinforcement for nodes cited in LLM answer.
-        
-        Called AFTER answer generation (deferred reinforcement).
-        
-        Args:
-            user_id: User identifier
-            node_ids: List of node IDs that were cited in answer
-        """
-        if not self.driver or not node_ids:
-            return
-        
-        try:
-            with self.driver.session() as session:
-                query = """
-                UNWIND $node_ids as node_id
-                MATCH (n {id: node_id, user_id: $user_id})
-                SET n.last_reinforced = datetime(),
-                    n.reinforcement_count = coalesce(n.reinforcement_count, 0) + 1
-                RETURN count(n) as updated_count
-                """
-                
-                result = session.run(query, user_id=user_id, node_ids=node_ids)
-                record = result.single()
-                count = record["updated_count"] if record else 0
-                print(f"Reinforced {count} cited nodes")
-        
-        except Exception as e:
-            print(f"Error reinforcing nodes: {e}")
     
     def detect_contradictions(self, user_id: str, new_fact_text: str, entity_name: str) -> List[Dict[str, Any]]:
         """

@@ -35,15 +35,19 @@ class GraphIngestion:
     
     def ingest_memory(
         self, 
-        user_id: str, 
+        user_id: str,
+        message_text: str,
+        facts: List[Dict[str, Any]],
         nodes: List[Dict[str, Any]], 
         relationships: List[Dict[str, Any]]
     ) -> Dict[str, int]:
         """
-        Ingest nodes and relationships into the graph.
+        Ingest message, facts, nodes and relationships into the graph.
         
         Args:
             user_id: User identifier
+            message_text: Original user message
+            facts: List of extracted facts
             nodes: List of node dictionaries
             relationships: List of relationship dictionaries
             
@@ -52,25 +56,90 @@ class GraphIngestion:
         """
         if not self.driver:
             print("Warning: Neo4j driver not initialized, skipping ingestion")
-            return {"nodes_created": 0, "relationships_created": 0}
+            return {"nodes_created": 0, "relationships_created": 0, "facts_created": 0}
         
         nodes_created = 0
         relationships_created = 0
+        facts_created = 0
+        message_id = None
         
         try:
             with self.driver.session() as session:
                 # 1. Ensure User node exists
                 self._ensure_user_node(session, user_id)
                 
-                # 2. Create/merge nodes
+                # 2. Create Message node
+                message_id = self._create_message_node(session, user_id, message_text)
+                
+                # 3. Create Fact nodes
+                fact_ids = []  # list of (fact_id, fact_text)
+                for fact in facts:
+                    fact_id = self._create_fact_node(session, user_id, fact, message_id)
+                    if fact_id:
+                        fact_ids.append((fact_id, fact.get("text", "")))
+                        facts_created += 1
+                
+                # 4. Create/merge entity nodes
+                node_map = {}  # Track created nodes
                 for node in nodes:
                     self._merge_node(session, user_id, node)
                     nodes_created += 1
+                    node_type = node.get("type")
+                    node_id = node.get("properties", {}).get("id")
+                    if node_type and node_id:
+                        node_map[node_type] = node_id
                 
-                # 3. Create/merge relationships
+                # 5. Create canonical relationships (truth layer)
+                transaction_id = node_map.get("Transaction")
+                asset_id = node_map.get("Asset")
+                
+                if transaction_id:
+                    # Core ownership: User made this transaction
+                    self._link_user_made_transaction(session, user_id, transaction_id)
+                    relationships_created += 1
+                    
+                    if asset_id:
+                        # Core semantic: Transaction affects this asset
+                        self._link_transaction_affects_asset(session, user_id, transaction_id, asset_id)
+                        relationships_created += 1
+                
+                # 6. Create extracted relationships (additional context)
                 for rel in relationships:
                     self._merge_relationship(session, user_id, rel)
                     relationships_created += 1
+                
+                # 7. Link facts to structured nodes using CONFIRMS (evidence layer)
+                # Facts should CONFIRM structured data (Transaction, Asset, Goal)
+                transaction_id = node_map.get("Transaction")
+                asset_id = node_map.get("Asset")
+                goal_id = node_map.get("Goal")
+                
+                for fact_id, _ in fact_ids:
+                    # Primary: Link fact to Transaction (if exists)
+                    if transaction_id:
+                        self._link_fact_confirms(session, user_id, fact_id, transaction_id, "Transaction")
+                        
+                        # Also link Fact to Asset via RELATES_TO for semantic recall
+                        if asset_id:
+                            self._link_fact_to_node(session, user_id, fact_id, asset_id, "Asset")
+                    
+                    # Secondary: Link fact to Asset/Goal (if exists and no transaction)
+                    elif asset_id:
+                        self._link_fact_confirms(session, user_id, fact_id, asset_id, "Asset")
+                    elif goal_id:
+                        self._link_fact_confirms(session, user_id, fact_id, goal_id, "Goal")
+                    
+                    # Fallback: Link to entities by name (for generic facts)
+                    else:
+                        for node in nodes:
+                            node_name = node.get("properties", {}).get("name")
+                            if node_name:
+                                self._link_fact_to_entity_by_name(session, user_id, fact_id, node_name)
+        
+                # 8. Detect and mark contradictions for new facts
+                for fact_id, fact_text in fact_ids:
+                    if fact_text:
+                        self._detect_and_mark_contradictions(session, user_id, fact_id, fact_text, nodes)
         
         except Exception as e:
             print(f"Error during graph ingestion: {e}")
@@ -78,7 +147,8 @@ class GraphIngestion:
         
         return {
             "nodes_created": nodes_created,
-            "relationships_created": relationships_created
+            "relationships_created": relationships_created,
+            "facts_created": facts_created
         }
     
     def _ensure_user_node(self, session, user_id: str):
@@ -89,6 +159,152 @@ class GraphIngestion:
         RETURN u
         """
         session.run(query, user_id=user_id)
+    
+    def _create_message_node(self, session, user_id: str, text: str) -> str:
+        """Create a Message node and link to User."""
+        message_id = f"msg_{uuid.uuid4().hex[:12]}"
+        query = """
+        MATCH (u:User {id: $user_id})
+        CREATE (m:Message {
+            id: $message_id,
+            user_id: $user_id,
+            text: $text,
+            timestamp: datetime(),
+            source_type: "chat",
+            created_at: datetime()
+        })
+        CREATE (u)-[:OWNS_MESSAGE]->(m)
+        RETURN m.id as id
+        """
+        result = session.run(query, user_id=user_id, message_id=message_id, text=text)
+        record = result.single()
+        return record["id"] if record else message_id
+    
+    def _create_fact_node(self, session, user_id: str, fact: Dict[str, Any], message_id: str) -> Optional[str]:
+        """Create a Fact node with deduplication - reinforce if exists."""
+        fact_text = fact.get("text", "")
+        confidence = fact.get("confidence", 0.8)
+        
+        if not fact_text:
+            return None
+        
+        # Check if fact already exists (deduplication)
+        check_query = """
+        MATCH (f:Fact {user_id: $user_id})
+        WHERE f.text = $fact_text
+        RETURN f.id as id
+        """
+        
+        result = session.run(check_query, user_id=user_id, fact_text=fact_text)
+        existing = result.single()
+        
+        if existing:
+            # Fact exists - reinforce it
+            fact_id = existing["id"]
+            reinforce_query = """
+            MATCH (f:Fact {id: $fact_id, user_id: $user_id})
+            SET f.reinforcement_count = coalesce(f.reinforcement_count, 0) + 1,
+                f.last_reinforced = datetime(),
+                f.confidence = ($confidence + f.confidence) / 2
+            RETURN f.id as id
+            """
+            session.run(reinforce_query, fact_id=fact_id, user_id=user_id, confidence=confidence)
+            print(f"Reinforced existing fact: {fact_id}")
+            return fact_id
+        
+        # Fact doesn't exist - create new
+        fact_id = f"fact_{uuid.uuid4().hex[:12]}"
+        create_query = """
+        MATCH (u:User {id: $user_id})
+        MATCH (m:Message {id: $message_id, user_id: $user_id})
+        CREATE (f:Fact {
+            id: $fact_id,
+            user_id: $user_id,
+            text: $fact_text,
+            confidence: $confidence,
+            reinforcement_count: 0,
+            timestamp: datetime(),
+            last_reinforced: datetime(),
+            created_at: datetime(),
+            updated_at: datetime()
+        })
+        CREATE (m)-[:DERIVED_FACT]->(f)
+        RETURN f.id as id
+        """
+        result = session.run(
+            create_query,
+            user_id=user_id,
+            message_id=message_id,
+            fact_id=fact_id,
+            fact_text=fact_text,
+            confidence=confidence
+        )
+        record = result.single()
+        return record["id"] if record else fact_id
+    
+    def _link_fact_to_entity_by_name(self, session, user_id: str, fact_id: str, entity_name: str):
+        """Link a Fact to an Entity using RELATES_TO relationship (fallback for generic entities)."""
+        query = """
+        MATCH (f:Fact {id: $fact_id, user_id: $user_id})
+        MATCH (e {name: $entity_name, user_id: $user_id})
+        MERGE (f)-[:RELATES_TO]->(e)
+        """
+        try:
+            session.run(query, fact_id=fact_id, entity_name=entity_name, user_id=user_id)
+        except Exception as e:
+            print(f"Warning: Could not link fact to entity: {e}")
+    
+    def _link_fact_to_node(self, session, user_id: str, fact_id: str, node_id: str, node_type: str):
+        """Link a Fact to a specific node by ID using RELATES_TO (for semantic recall)."""
+        query = f"""
+        MATCH (f:Fact {{id: $fact_id, user_id: $user_id}})
+        MATCH (n:{node_type} {{id: $node_id, user_id: $user_id}})
+        MERGE (f)-[:RELATES_TO]->(n)
+        """
+        try:
+            session.run(query, fact_id=fact_id, node_id=node_id, user_id=user_id)
+            print(f"Linked Fact {fact_id} → RELATES_TO → {node_type} {node_id}")
+        except Exception as e:
+            print(f"Warning: Could not link fact to {node_type}: {e}")
+    
+    def _link_fact_confirms(self, session, user_id: str, fact_id: str, node_id: str, node_type: str):
+        """Link a Fact to structured node using CONFIRMS relationship (canonical pattern)."""
+        query = f"""
+        MATCH (f:Fact {{id: $fact_id, user_id: $user_id}})
+        MATCH (n:{node_type} {{id: $node_id, user_id: $user_id}})
+        MERGE (f)-[:CONFIRMS]->(n)
+        """
+        try:
+            session.run(query, fact_id=fact_id, node_id=node_id, user_id=user_id)
+            print(f"Linked Fact {fact_id} → CONFIRMS → {node_type} {node_id}")
+        except Exception as e:
+            print(f"Warning: Could not link fact to {node_type}: {e}")
+    
+    def _link_user_made_transaction(self, session, user_id: str, transaction_id: str):
+        """Create canonical User → MADE_TRANSACTION → Transaction relationship."""
+        query = """
+        MATCH (u:User {id: $user_id})
+        MATCH (t:Transaction {id: $transaction_id, user_id: $user_id})
+        MERGE (u)-[:MADE_TRANSACTION]->(t)
+        """
+        try:
+            session.run(query, user_id=user_id, transaction_id=transaction_id)
+            print(f"Linked User {user_id} → MADE_TRANSACTION → {transaction_id}")
+        except Exception as e:
+            print(f"Warning: Could not link user to transaction: {e}")
+    
+    def _link_transaction_affects_asset(self, session, user_id: str, transaction_id: str, asset_id: str):
+        """Create canonical Transaction → AFFECTS_ASSET → Asset relationship."""
+        query = """
+        MATCH (t:Transaction {id: $transaction_id, user_id: $user_id})
+        MATCH (a:Asset {id: $asset_id, user_id: $user_id})
+        MERGE (t)-[:AFFECTS_ASSET]->(a)
+        """
+        try:
+            session.run(query, transaction_id=transaction_id, asset_id=asset_id, user_id=user_id)
+            print(f"Linked Transaction {transaction_id} → AFFECTS_ASSET → {asset_id}")
+        except Exception as e:
+            print(f"Warning: Could not link transaction to asset: {e}")
     
     def _merge_node(self, session, user_id: str, node: Dict[str, Any]):
         """
@@ -112,12 +328,17 @@ class GraphIngestion:
             properties["source_type"] = "user_input"
         
         # Create Cypher query with labels and metadata
+        # Note: Only Message has OWNS_MESSAGE edge from User
+        # Fact is linked via Message->DERIVED_FACT->Fact
+        # Transaction is linked via User->MADE_TRANSACTION->Transaction
+        # Asset is linked via Transaction->AFFECTS_ASSET->Asset
         query = f"""
         MERGE (n:{node_type} {{id: $id, user_id: $user_id}})
         ON CREATE SET 
             n.created_at = datetime(),
             n.timestamp = datetime(),
             n.confidence = 0.8,
+            n.reinforcement_count = 0,
             n.last_reinforced = datetime()
         SET n += $properties, 
             n.updated_at = datetime()
@@ -136,25 +357,39 @@ class GraphIngestion:
         Merge a relationship between two nodes.
         
         Ensures both nodes exist before creating relationship.
+        Supports matching by name or id.
         """
         rel_type = relationship.get("type", "RELATED_TO")
         from_type = relationship.get("from_type", "Entity")
         to_type = relationship.get("to_type", "Entity")
         from_name = relationship.get("from_name")
         to_name = relationship.get("to_name")
+        from_id = relationship.get("from_id")
+        to_id = relationship.get("to_id")
         properties = relationship.get("properties", {})
         
-        # If from_type is User, match by user_id
+        # Build source node match
         if from_type == "User":
             from_match = f"(a:User {{id: $user_id}})"
             from_params = {"user_id": user_id}
+        elif from_id:
+            # Match by ID (for Transaction, Asset, etc.)
+            from_match = f"(a:{from_type} {{id: $from_id, user_id: $user_id}})"
+            from_params = {"from_id": from_id, "user_id": user_id}
         else:
+            # Match by name (fallback)
             from_match = f"(a:{from_type} {{name: $from_name, user_id: $user_id}})"
             from_params = {"from_name": from_name, "user_id": user_id}
         
-        # Match target node
-        to_match = f"(b:{to_type} {{name: $to_name, user_id: $user_id}})"
-        to_params = {"to_name": to_name, "user_id": user_id}
+        # Build target node match
+        if to_id:
+            # Match by ID
+            to_match = f"(b:{to_type} {{id: $to_id, user_id: $user_id}})"
+            to_params = {"to_id": to_id, "user_id": user_id}
+        else:
+            # Match by name
+            to_match = f"(b:{to_type} {{name: $to_name, user_id: $user_id}})"
+            to_params = {"to_name": to_name, "user_id": user_id}
         
         # Build relationship query
         query = f"""
@@ -173,6 +408,100 @@ class GraphIngestion:
         except Exception as e:
             print(f"Warning: Could not create relationship {rel_type}: {e}")
     
+    def _detect_and_mark_contradictions(
+        self,
+        session,
+        user_id: str,
+        new_fact_id: str,
+        new_fact_text: str,
+        nodes: List[Dict[str, Any]]
+    ):
+        """
+        After creating a new fact, find existing facts about the same entities
+        that may contradict the new one, create CONTRADICTS edges, and reduce
+        confidence of the older facts.
+
+        Heuristic: overlap of significant words between fact texts.
+        """
+        import re
+
+        STOP_WORDS = {"i", "a", "in", "of", "the", "is", "my", "to",
+                      "and", "or", "at", "for", "have", "has", "had",
+                      "by", "it", "be", "an", "on", "user", "that"}
+
+        def significant_words(text: str):
+            tokens = re.findall(r'[a-z0-9]+', text.lower())
+            return set(t for t in tokens if t not in STOP_WORDS and len(t) > 1)
+
+        new_words = significant_words(new_fact_text)
+        if not new_words:
+            return
+
+        # Collect entity names extracted alongside this fact
+        entity_names = [
+            n.get("properties", {}).get("name", "")
+            for n in nodes
+            if n.get("properties", {}).get("name")
+        ]
+
+        # Find existing facts for this user (excluding the new one)
+        find_query = """
+        MATCH (f:Fact {user_id: $user_id})
+        WHERE f.id <> $new_fact_id
+        RETURN f.id AS fact_id, f.text AS fact_text, f.confidence AS confidence
+        ORDER BY f.created_at DESC
+        LIMIT 30
+        """
+        result = session.run(find_query, user_id=user_id, new_fact_id=new_fact_id)
+        candidates = [
+            {"fact_id": r["fact_id"], "fact_text": r["fact_text"], "confidence": r["confidence"]}
+            for r in result if r["fact_text"]
+        ]
+
+        for candidate in candidates:
+            old_words = significant_words(candidate["fact_text"])
+            overlap = new_words & old_words
+
+            # Require at least one entity name word and one numeric token to differ,
+            # or significant word overlap (≥ 40% of the smaller set).
+            min_size = min(len(new_words), len(old_words)) or 1
+            overlap_ratio = len(overlap) / min_size
+
+            # Check if they share an entity mention
+            shares_entity = any(
+                any(w in old_words for w in significant_words(name))
+                for name in entity_names if name
+            )
+
+            # Check if both contain numbers (possibly conflicting amounts)
+            new_nums = set(re.findall(r'\d+', new_fact_text))
+            old_nums = set(re.findall(r'\d+', candidate["fact_text"]))
+            conflicting_amounts = bool(new_nums and old_nums and new_nums != old_nums)
+
+            is_contradiction = (
+                overlap_ratio >= 0.4 and shares_entity and conflicting_amounts
+            )
+
+            if is_contradiction:
+                print(f"[Contradiction] Old: '{candidate['fact_text']}' vs New: '{new_fact_text}'")
+                mark_query = """
+                MATCH (old:Fact {id: $old_id, user_id: $user_id})
+                MATCH (new:Fact {id: $new_id, user_id: $user_id})
+                MERGE (old)-[:CONTRADICTS]->(new)
+                SET old.confidence = old.confidence * 0.5,
+                    old.updated_at = datetime()
+                """
+                try:
+                    session.run(
+                        mark_query,
+                        old_id=candidate["fact_id"],
+                        new_id=new_fact_id,
+                        user_id=user_id
+                    )
+                    print(f"Marked CONTRADICTS: {candidate['fact_id']} → {new_fact_id}")
+                except Exception as e:
+                    print(f"Warning: Could not mark contradiction: {e}")
+
     def close(self):
         """Close Neo4j connection."""
         if self.driver:
