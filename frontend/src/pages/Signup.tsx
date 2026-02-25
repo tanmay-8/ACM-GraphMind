@@ -33,19 +33,8 @@ export default function Signup() {
     }
   };
 
-  const Field = ({ label, type, value, onChange, placeholder }: {
-    label: string; type: string; value: string;
-    onChange: (v: string) => void; placeholder: string;
-  }) => (
-    <div className="space-y-1.5">
-      <label className="text-[11px] font-semibold text-white/40 uppercase tracking-widest">{label}</label>
-      <input
-        type={type} value={value} onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder} required disabled={isLoading}
-        className="w-full px-4 py-3 rounded-xl bg-white/[0.04] border border-white/[0.08] text-sm text-white placeholder-white/20 focus:outline-none focus:border-white/[0.18] transition-all disabled:opacity-50"
-      />
-    </div>
-  );
+  const inputCls = "w-full px-4 py-3 rounded-xl bg-white/[0.04] border border-white/[0.08] text-sm text-white placeholder-white/20 focus:outline-none focus:border-white/[0.18] transition-all disabled:opacity-50";
+  const labelCls = "text-[11px] font-semibold text-white/40 uppercase tracking-widest";
 
   return (
     <div className="min-h-screen flex bg-[#0d0d10]">
@@ -98,11 +87,23 @@ export default function Signup() {
             </div>
           )}
           <form onSubmit={handleSubmit} className="space-y-4">
-            <Field label="Full Name" type="text" value={fullName} onChange={setFullName} placeholder="Full Name" />
-            <Field label="Email" type="email" value={email} onChange={setEmail} placeholder="Email Address" />
+            <div className="space-y-1.5">
+              <label className={labelCls}>Full Name</label>
+              <input type="text" value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="Full Name" required disabled={isLoading} className={inputCls} />
+            </div>
+            <div className="space-y-1.5">
+              <label className={labelCls}>Email</label>
+              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email Address" required disabled={isLoading} className={inputCls} />
+            </div>
             <div className="grid grid-cols-2 gap-3">
-              <Field label="Password" type="password" value={password} onChange={setPassword} placeholder="••••••••" />
-              <Field label="Confirm" type="password" value={confirmPassword} onChange={setConfirmPassword} placeholder="••••••••" />
+              <div className="space-y-1.5">
+                <label className={labelCls}>Password</label>
+                <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" required disabled={isLoading} className={inputCls} />
+              </div>
+              <div className="space-y-1.5">
+                <label className={labelCls}>Confirm</label>
+                <input type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} placeholder="••••••••" required disabled={isLoading} className={inputCls} />
+              </div>
             </div>
             <button type="submit" disabled={isLoading}
               className="w-full py-3 mt-1 rounded-xl bg-indigo-600 hover:bg-indigo-500 active:scale-[0.99] text-sm font-semibold text-white transition-all disabled:opacity-40 disabled:cursor-not-allowed">

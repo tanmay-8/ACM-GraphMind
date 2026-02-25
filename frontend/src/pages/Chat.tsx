@@ -2,6 +2,8 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { chatAPI } from '../lib/api';
 import { useNavigate } from 'react-router-dom';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 interface MemoryCitation {
@@ -330,7 +332,29 @@ export default function Chat() {
                   ? 'bg-indigo-600/[0.18] border border-indigo-500/20 text-white/90 rounded-br-sm'
                   : 'bg-[#111114] border border-white/[0.06] text-white/80 rounded-bl-sm'
               }`}>
-                <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.content}</p>
+                {msg.role === 'assistant' ? (
+                  <div className="text-sm leading-relaxed prose-sm prose-invert max-w-none
+                    [&>p]:mb-2 [&>p:last-child]:mb-0
+                    [&>ul]:my-2 [&>ul]:pl-4 [&>ul>li]:mb-1 [&>ul>li]:list-disc
+                    [&>ol]:my-2 [&>ol]:pl-4 [&>ol>li]:mb-1 [&>ol>li]:list-decimal
+                    [&>h1]:text-base [&>h1]:font-semibold [&>h1]:mb-2 [&>h1]:mt-3
+                    [&>h2]:text-sm [&>h2]:font-semibold [&>h2]:mb-1.5 [&>h2]:mt-3
+                    [&>h3]:text-sm [&>h3]:font-semibold [&>h3]:mb-1 [&>h3]:mt-2
+                    [&>strong]:font-semibold [&>strong]:text-white/90
+                    [&_strong]:font-semibold [&_strong]:text-white/90
+                    [&_em]:italic [&_em]:text-white/70
+                    [&>code]:px-1.5 [&>code]:py-0.5 [&>code]:rounded [&>code]:bg-white/[0.06] [&>code]:text-xs [&>code]:font-mono
+                    [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:rounded [&_code]:bg-white/[0.06] [&_code]:text-xs [&_code]:font-mono
+                    [&>pre]:my-2 [&>pre]:p-3 [&>pre]:rounded-lg [&>pre]:bg-white/[0.04] [&>pre]:overflow-x-auto
+                    [&>blockquote]:border-l-2 [&>blockquote]:border-white/20 [&>blockquote]:pl-3 [&>blockquote]:text-white/50 [&>blockquote]:my-2
+                    [&>hr]:border-white/10 [&>hr]:my-3
+                    [&>table]:w-full [&>table]:text-xs [&_th]:px-2 [&_th]:py-1.5 [&_th]:border-b [&_th]:border-white/10 [&_th]:text-left [&_th]:text-white/50
+                    [&_td]:px-2 [&_td]:py-1.5 [&_td]:border-b [&_td]:border-white/[0.04]">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                  </div>
+                ) : (
+                  <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.content}</p>
+                )}
 
                 {msg.role === 'assistant' && msg.citations && msg.citations.length > 0 && (
                   <SourcesPanel citations={msg.citations} />
