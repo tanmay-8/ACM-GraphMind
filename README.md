@@ -1,390 +1,348 @@
-# 🧠 GraphMind - Financial Graph Memory RAG System
+# 🧠 GraphMind - Financial Graph Memory Assistant
 
-> A user-isolated, graph-first financial memory assistant that uses adaptive multi-hop graph retrieval combined with vector search to generate grounded and explainable financial insights.
+> An intelligent financial memory assistant using PostgreSQL for user data and Neo4j for knowledge graphs, with production-grade multi-hop retrieval.
 
 [![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=for-the-badge&logo=fastapi)](https://fastapi.tiangolo.com/)
 [![React](https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)](https://reactjs.org/)
 [![Neo4j](https://img.shields.io/badge/Neo4j-008CC1?style=for-the-badge&logo=neo4j&logoColor=white)](https://neo4j.com/)
-[![Milvus](https://img.shields.io/badge/Milvus-00ADD8?style=for-the-badge)](https://milvus.io/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-316192?style=for-the-badge&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
 
 ---
 
-## 🎯 Project Overview
+## 🎯 What It Does
 
-GraphMind is a next-generation financial assistant that combines:
-- **Graph Memory** (Neo4j) for structured financial knowledge
-- **Vector Memory** (Milvus) for semantic recall
-- **LLM Intelligence** (Gemini) for extraction and reasoning
-- **Adaptive Retrieval** for optimal context gathering
+GraphMind stores your financial conversations and facts in a knowledge graph, then retrieves relevant context to answer your questions with explainable citations.
 
-### Key Features
+**Example:**
+```
+You: "I invested $50,000 in HDFC Mutual Fund last month"
+GraphMind: ✓ Stored in knowledge graph
 
-✅ **Hybrid Memory System**: Graph + Vector storage  
-✅ **Intent-Aware Processing**: Automatically classifies MEMORY vs QUESTION  
-✅ **Multi-hop Reasoning**: Adaptive graph traversal based on query complexity  
-✅ **User Isolation**: Complete data privacy per user  
-✅ **Explainable AI**: Returns sources with every answer  
-✅ **Performance Tracking**: Measure retrieval timing  
-✅ **Production-Ready**: Clean architecture, proper error handling
+You: "How much is my investment?"
+GraphMind: "Based on your records, you invested $50,000 in HDFC Mutual Fund"
+[Citations: Transaction #123, Asset: HDFC MF, hop distance: 2]
+```
+
+---
+
+## ✨ Key Features
+
+- **Dual Database**: PostgreSQL (users, chat history) + Neo4j (knowledge graph)
+- **Smart Retrieval**: Mode-based queries (direct lookup, aggregation, relational reasoning)
+- **Chat Persistence**: Full conversation history with metrics and citations
+- **User Authentication**: JWT tokens with bcrypt password hashing
+- **Explainable AI**: Every answer includes source citations and hop distances
+- **Production-Ready**: Docker Compose, connection pooling, error handling
 
 ---
 
 ## 🏗️ Architecture
 
 ```
-┌──────────┐
-│   User   │
-└────┬─────┘
-     │
-     ├──────────────────────────────────────┐
-     ▼                                      ▼
-┌─────────────┐                    ┌────────────────┐
-│  Frontend   │                    │  Backend API   │
-│ (React)     │ ──── REST ────────▶│  (FastAPI)     │
-└─────────────┘                    └────────┬───────┘
-                                            │
-                     ┌──────────────────────┼──────────────────┐
-                     ▼                      ▼                  ▼
-             ┌──────────────┐      ┌──────────────┐  ┌──────────────┐
-             │ Extraction   │      │  Neo4j       │  │   Milvus     │
-             │ (LLM)        │      │  (Graph)     │  │  (Vector)    │
-             └──────────────┘      └──────────────┘  └──────────────┘
+┌─────────────┐
+│   React     │ (TypeScript + Vite)
+│  Frontend   │
+└──────┬──────┘
+       │ REST API
+       ▼
+┌─────────────┐
+│   FastAPI   │ (Python 3.10)
+│   Backend   │
+└──────┬──────┘
+       │
+   ┌───┴────────────────┐
+   ▼                    ▼
+┌──────────┐      ┌──────────┐
+│PostgreSQL│      │  Neo4j   │
+│ (Users,  │      │ (Facts,  │
+│  Chat)   │      │  Graph)  │
+└──────────┘      └──────────┘
 ```
 
-See [Architecture Documentation](docs/architecture.md) for detailed system design.
+**Data Flow:**
+1. User sends message → FastAPI authenticates (JWT)
+2. Save user message to PostgreSQL
+3. Classify intent (MEMORY/QUESTION/BOTH)
+4. **MEMORY**: Extract facts → Store in Neo4j graph
+5. **QUESTION**: Retrieve from Neo4j → Generate answer (Gemini)
+6. Save assistant response with metadata to PostgreSQL
 
 ---
 
 ## 🚀 Quick Start
 
 ### Prerequisites
-
 - Python 3.10+
 - Node.js 18+
-- Neo4j
-- Milvus
-- Gemini API Key
+- Docker & Docker Compose
 
-### Installation
+### 1. Clone & Setup Environment
 
 ```bash
-# Clone repository
 git clone <repo-url>
 cd graphmind
 
-# Backend setup
+# Setup backend .env
+cd backend
+cp .env.example .env
+# Add your GEMINI_API_KEY
+```
+
+### 2. Start Databases
+
+```bash
+cd /home/tanmay08/graphmind
+docker compose up -d
+
+# Verify services
+docker compose ps
+```
+
+### 3. Install Dependencies
+
+```bash
+# Backend
 cd backend
 python -m venv venv
-source venv/bin/activate  # On Linux/Mac
+source venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env
-# Edit .env and add your API keys
 
-# Frontend setup
+# Frontend
 cd ../frontend
 npm install
 ```
 
-### Running
+### 4. Run Application
 
 ```bash
-# Terminal 1: Start backend
+# Terminal 1: Backend
 cd backend
 source venv/bin/activate
-python -m api.main
+uvicorn api.main:app --reload --host 0.0.0.0 --port 8001
 
-# Terminal 2: Start frontend
+# Terminal 2: Frontend
 cd frontend
 npm run dev
 ```
 
-📚 **Full setup guide**: [docs/setup.md](docs/setup.md)
+**Access:**
+- Frontend: http://localhost:5173
+- Backend API: http://localhost:8001/docs
 
 ---
 
-## 📁 Project Structure
+## 🗂️ Project Structure
 
 ```
 graphmind/
 ├── backend/
-│   ├── api/                      # API layer (FastAPI routes)
-│   │   ├── main.py              # Application entry point
-│   │   ├── models.py            # Pydantic request/response models
-│   │   └── routes/              # API endpoints
-│   │       ├── health.py        # Health check
-│   │       └── chat.py          # Main chat endpoint
-│   │
-│   ├── services/                # Business logic layer
-│   │   ├── extraction/          # LLM-based entity extraction
-│   │   │   └── llm_extractor.py
-│   │   ├── graph/               # Neo4j graph operations
-│   │   │   ├── schema.cypher
-│   │   │   ├── ingestion.py
-│   │   │   └── retrieval.py
-│   │   ├── vector/              # Milvus vector operations
-│   │   │   ├── embeddings.py
-│   │   │   ├── ingestion.py
-│   │   │   └── retrieval.py
-│   │   ├── llm/                 # LLM services
-│   │   │   ├── intent_classifier.py
-│   │   │   └── answer_generator.py
-│   │   └── orchestrator/        # Workflow coordination
-│   │       ├── memory_orchestrator.py
-│   │       └── retrieval_orchestrator.py
-│   │
-│   ├── config/                  # Configuration management
-│   │   └── settings.py
-│   ├── requirements.txt         # Python dependencies
-│   └── .env                     # Environment variables
+│   ├── api/
+│   │   ├── main.py                    # FastAPI app
+│   │   ├── models.py                  # Request/response models
+│   │   └── routes/
+│   │       ├── auth.py                # Signup, login, /me
+│   │       └── chat.py                # Chat + history endpoints
+│   ├── services/
+│   │   ├── auth/
+│   │   │   └── auth_service.py        # JWT, user management
+│   │   ├── database/
+│   │   │   ├── user_service.py        # PostgreSQL users
+│   │   │   └── chat_service.py        # PostgreSQL chat history
+│   │   ├── graph/
+│   │   │   ├── ingest.py              # Neo4j memory storage
+│   │   │   ├── retrieval.py           # Mode-based retrieval
+│   │   │   ├── query_understanding.py # Intent classification
+│   │   │   └── schema.cypher          # Graph schema
+│   │   ├── llm/
+│   │   │   └── intent_classifier.py   # MEMORY/QUESTION/BOTH
+│   │   └── orchestrator/
+│   │       ├── memory_orchestrator.py # Ingestion workflow
+│   │       └── retrieval_orchestrator.py # Query workflow
+│   ├── database/
+│   │   ├── postgres.py                # Connection pooling
+│   │   └── init.sql                   # PostgreSQL schema
+│   ├── config/
+│   │   └── settings.py                # Environment config
+│   └── requirements.txt
 │
-├── frontend/                    # React frontend
-│   ├── src/
-│   ├── public/
-│   └── package.json
+├── frontend/
+│   └── src/
+│       ├── components/
+│       │   ├── Auth/                  # Login, Signup
+│       │   └── Chat/                  # Chat interface
+│       ├── contexts/
+│       │   └── AuthContext.tsx        # Auth state management
+│       └── services/
+│           └── api.ts                 # Axios API client
 │
-├── data/                        # Data storage
-│   ├── examples/               # Sample data
-│   └── user_samples/           # User data (gitignored)
-│
-├── docs/                        # Documentation
-│   ├── architecture.md         # System architecture
-│   ├── setup.md               # Setup guide
-│   └── team-responsibilities.md # Team division
-│
-└── README.md                   # This file
+├── docker-compose.yml                 # PostgreSQL + Neo4j
+└── README.md
 ```
 
 ---
 
-## 🔄 How It Works
+## 🔧 Tech Stack
 
-### 1️⃣ Memory Ingestion Flow
+**Frontend:** React 18, TypeScript, Vite, Axios  
+**Backend:** FastAPI 0.109.0, Python 3.10, Uvicorn  
+**Databases:**
+- PostgreSQL 16 (users, chat_sessions, chat_messages)
+- Neo4j 5.14.0 (knowledge graph with APOC)
 
+**Authentication:** JWT (python-jose), bcrypt 4.1.2  
+**LLM:** Google Gemini 1.5-flash  
+**Infrastructure:** Docker Compose, psycopg2 connection pooling
+
+---
+
+## 🎯 Retrieval System
+
+**Mode-Based Queries:**
+- `DIRECT_LOOKUP`: Simple facts (depth 1) - "What's my balance?"
+- `AGGREGATION`: Sum/count queries (depth 2) - "Total investments?"
+- `RELATIONAL_REASONING`: Multi-hop (depth 3) - "Am I aligned with goals?"
+
+**Scoring Algorithm:**
 ```
-User: "I invested 50,000 in HDFC Mutual Fund"
-  ↓
-Intent: MEMORY
-  ↓
-LLM Extraction → {nodes: [Asset], relationships: [OWNS]}
-  ↓
-Graph Storage (Neo4j) + Vector Storage (Milvus)
-  ↓
-Response: "Financial memory stored successfully"
-```
-
-### 2️⃣ Question Answering Flow
-
-```
-User: "Am I aligned with my retirement goal?"
-  ↓
-Intent: QUESTION
-  ↓
-Graph Retrieval (2-hop) + Vector Retrieval (semantic)
-  ↓
-Context Assembly
-  ↓
-LLM Answer Generation
-  ↓
-Response: {answer, sources, metrics}
+score = 0.4 × graph_relevance 
+      + 0.3 × recency (exp decay)
+      + 0.2 × confidence
+      + 0.1 × reinforcement (log scale)
 ```
 
-### 3️⃣ Combined Flow
+**Features:**
+- No wildcard paths (prevents query explosion)
+- Real hop distance calculation via `shortestPath()`
+- Timeline filtering ("last month", "in 2024")
+- Deferred reinforcement (updates after answer generation)
 
-```
-User: "I invested 50k in HDFC. Am I on track?"
-  ↓
-Intent: BOTH
-  ↓
-Run BOTH flows
-  ↓
-Response: {answer, storage_result, sources, metrics}
+---
+
+## 📡 API Endpoints
+
+### Authentication
+- `POST /auth/signup` - Create account
+- `POST /auth/login` - Get JWT token
+- `GET /auth/me` - Get current user
+
+### Chat
+- `POST /chat` - Send message (requires JWT)
+- `GET /sessions` - List chat sessions
+- `GET /sessions/{id}/messages` - Get conversation history
+- `POST /sessions/{id}/archive` - Archive session
+- `DELETE /sessions/{id}` - Delete session
+
+### Example Request
+```bash
+curl -X POST http://localhost:8001/chat \
+  -H "Authorization: Bearer <your-jwt-token>" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "I invested $50k in stocks"}'
 ```
 
 ---
 
-## 👥 Team Responsibilities
+## 💾 Database Schema
 
-**Person 1 - Graph Lead**
-- Neo4j schema design
-- Graph ingestion & retrieval
-- Multi-hop query optimization
+**PostgreSQL Tables:**
+- `users` - UUID, email, bcrypt password, neo4j_user_id mapping
+- `chat_sessions` - Conversation grouping, archiving
+- `chat_messages` - Full message history with JSONB metadata (retrieval_time_ms, citations)
+- `user_preferences` - Key-value settings
 
-**Person 2 - LLM Lead**
-- Entity extraction
-- Intent classification
-- Answer generation
-
-**Person 3 - Vector Lead**
-- Embedding generation
-- Milvus integration
-- Semantic search
-
-📋 **Detailed breakdown**: [docs/team-responsibilities.md](docs/team-responsibilities.md)
+**Neo4j Graph:**
+- **Nodes**: User, Message, Fact, Transaction, Asset, Goal
+- **Relationships**: OWNS_MEMORY, MADE_TRANSACTION, AFFECTS_ASSET, HAS_GOAL
 
 ---
 
-## 🛠️ Tech Stack
+## 🐳 Docker Services
 
-### Backend
-- **Framework**: FastAPI
-- **Graph DB**: Neo4j
-- **Vector DB**: Milvus
-- **LLM**: Google Gemini (or OpenAI)
-- **Language**: Python 3.10+
+```yaml
+services:
+  postgres:
+    image: postgres:16-alpine
+    port: 5432
+    volumes: ./backend/database/init.sql
+    
+  neo4j:
+    image: neo4j:5.14.0
+    ports: 7474, 7687
+    plugins: APOC
+```
 
-### Frontend
-- **Framework**: React 18
-- **Build Tool**: Vite
-- **Styling**: TailwindCSS
-- **Language**: TypeScript
-
-### MLOps
-- **Embeddings**: Sentence Transformers / OpenAI
-- **Vector Search**: Milvus IVF_FLAT index
-- **Graph Queries**: Cypher
+**Default Admin:** admin@graphmind.ai / admin123
 
 ---
 
-## 📊 Performance Targets
-
-| Metric | Target | Notes |
-|--------|--------|-------|
-| Graph Retrieval | < 50ms | Multi-hop queries |
-| Vector Retrieval | < 30ms | Semantic search |
-| Total Retrieval | < 100ms | Combined time |
-| LLM Response | N/A | Not measured |
-
----
-
-## 🔧 Configuration
-
-All configuration is environment-based. Copy `.env.example` to `.env`:
+## ⚙️ Configuration (.env)
 
 ```env
-# LLM
+# Gemini API
 GEMINI_API_KEY=your_key_here
 
 # Neo4j
 NEO4J_URI=bolt://localhost:7687
-NEO4J_PASSWORD=your_password
+NEO4J_USERNAME=neo4j
+NEO4J_PASSWORD=graphmind123
 
-# Milvus
-MILVUS_HOST=localhost
-MILVUS_PORT=19530
+# PostgreSQL
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5432
+POSTGRES_DB=graphmind
+POSTGRES_USER=graphmind_user
+POSTGRES_PASSWORD=graphmind_pass_2026
 
-# Settings
-DEFAULT_TOP_K=5
-MAX_GRAPH_DEPTH=3
+# JWT
+JWT_SECRET_KEY=your_secret_key_here
 ```
 
 ---
 
-## 📖 API Documentation
+## 🎯 Current Status
 
-Once the backend is running, visit:
-- **Swagger UI**: http://localhost:8000/docs
-- **ReDoc**: http://localhost:8000/redoc
+✅ **Working:**
+- User signup/login with PostgreSQL
+- JWT authentication
+- Chat message persistence
+- Neo4j graph ingestion
+- Production-grade retrieval system
+- Session management API
 
-### Key Endpoints
+⚠️ **Known Issues:**
+- Gemini API quota limit (20 req/day on free tier)
 
-**POST /chat** - Main chat endpoint
-```json
-{
-  "user_id": "user123",
-  "message": "I invested 50,000 in HDFC MF. Am I aligned with my goal?",
-  "conversation_id": "conv_001"
-}
-```
-
-**GET /health** - Health check
-
----
-
-## 🧪 Testing
-
-```bash
-# Test health endpoint
-curl http://localhost:8000/health
-
-# Test chat endpoint
-curl -X POST http://localhost:8000/chat \
-  -H "Content-Type: application/json" \
-  -d '{
-    "user_id": "test_user",
-    "message": "I invested 50,000 in HDFC MF",
-    "conversation_id": "test_conv"
-  }'
-```
-
----
-
-## 📚 Documentation
-
-- [System Architecture](docs/architecture.md)
-- [Setup Guide](docs/setup.md)
-- [Team Responsibilities](docs/team-responsibilities.md)
-- [Backend README](backend/README.md)
-
----
-
-## 🏆 What Makes This Special
-
-✨ **Research-Inspired**: Based on IGMiRAG and graph RAG papers  
-✨ **Production-Ready**: Clean architecture, error handling, logging  
-✨ **Explainable**: Returns sources and metrics  
-✨ **Scalable**: Service-oriented design  
-✨ **Performant**: Optimized retrieval strategies  
-✨ **Secure**: User-isolated data storage  
+📋 **Pending:**
+- Chat history UI components
+- Session switching in frontend
+- Real-time message loading
 
 ---
 
 ## 🛣️ Roadmap
 
-### Phase 1: Core Features (Current)
-- [x] Intent classification
-- [x] Service layer architecture
-- [ ] Graph ingestion
-- [ ] Vector ingestion
-- [ ] Retrieval implementation
+**Phase 1 (Complete):**
+- ✅ Dual database architecture
+- ✅ User authentication
+- ✅ Chat persistence
+- ✅ Mode-based retrieval
 
-### Phase 2: Advanced Features
-- [ ] Conversation memory
-- [ ] Multi-user support
-- [ ] Advanced analytics
-- [ ] Performance optimization
+**Phase 2 (In Progress):**
+- 🔄 Chat history UI
+- 🔄 Session management UI
 
-### Phase 3: Production
-- [ ] Authentication
-- [ ] Production deployment
-- [ ] Monitoring & logging
-- [ ] Load testing
-
----
-
-## 🤝 Contributing
-
-This is a hackathon project with a 3-person team. See [team-responsibilities.md](docs/team-responsibilities.md) for task division.
+**Phase 3 (Future):**
+- Analytics dashboard
+- Export chat history
+- Advanced filtering
+- Production deployment
 
 ---
 
 ## 📄 License
 
-MIT License - see LICENSE file for details
+MIT License
 
 ---
 
-## 🙏 Acknowledgments
-
-- Inspired by research papers on Graph RAG and IGMiRAG
-- Built with amazing open-source tools
-- Powered by Graph + Vector hybrid memory
-
----
-
-## 📞 Contact
-
-For questions or issues, please open an issue or contact the team.
-
----
-
-**Built with ❤️ for intelligent financial assistance**
+**Built with ❤️ using FastAPI, React, PostgreSQL, and Neo4j**
