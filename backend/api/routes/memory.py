@@ -57,8 +57,24 @@ def get_user_from_token(authorization: Optional[str] = Header(None)) -> str:
     return payload["user_id"]
 
 
-@router.get("/mindmap", response_model=MindmapResponse)
-async def get_mindmap(authorization: Optional[str] = Header(None)):
+@router.get(
+    "/mindmap",
+    response_model=MindmapResponse,
+    summary="Get memory mindmap",
+    description="Return all knowledge-graph nodes and edges for the authenticated user.",
+    responses={
+        200: {"description": "Mindmap data returned successfully."},
+        400: {"description": "User is not linked to a knowledge graph."},
+        401: {"description": "Missing, invalid, or expired token."},
+        404: {"description": "User not found."}
+    }
+)
+async def get_mindmap(
+    authorization: Optional[str] = Header(
+        default=None,
+        description="Bearer token. Format: 'Bearer <access_token>'"
+    )
+):
     """
     Get user's memory graph for visualization.
     

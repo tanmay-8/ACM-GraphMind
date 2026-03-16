@@ -3,10 +3,37 @@ from fastapi.middleware.cors import CORSMiddleware
 from api.routes import health, chat, auth, memory
 from config.settings import settings
 
+openapi_tags = [
+    {
+        "name": "health",
+        "description": "Service health and readiness endpoints."
+    },
+    {
+        "name": "authentication",
+        "description": "User signup, login, and token-based user profile endpoints."
+    },
+    {
+        "name": "chat",
+        "description": "Unified chat, session management, and conversation history endpoints."
+    },
+    {
+        "name": "memory",
+        "description": "Knowledge graph visualization and memory graph endpoints."
+    }
+]
+
 app = FastAPI(
     title=settings.API_TITLE,
-    description=settings.API_DESCRIPTION,
-    version=settings.API_VERSION
+    description=(
+        f"{settings.API_DESCRIPTION}\n\n"
+        "Authentication uses a Bearer JWT token in the `Authorization` header.\n\n"
+        "Interactive docs are available at `/docs` and OpenAPI JSON at `/openapi.json`."
+    ),
+    version=settings.API_VERSION,
+    openapi_tags=openapi_tags,
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url="/openapi.json"
 )
 
 # Configure CORS
