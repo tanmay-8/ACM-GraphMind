@@ -1,6 +1,6 @@
-from fastapi import APIRouter, HTTPException, Depends, Header, status
+from fastapi import APIRouter, HTTPException, Depends, Header, status, Query, Path
 from typing import Optional, List
-from api.models import ChatRequest, ChatResponse, IntentType, MemoryStorageResult, RetrievalMetrics, MemoryCitation
+from api.models import ChatRequest, ChatResponse, IntentType, MemoryStorageResult, RetrievalMetrics
 from services.llm.intent_classifier import IntentClassifier
 from services.orchestrator.memory_orchestrator import MemoryOrchestrator
 from services.orchestrator.retrieval_orchestrator import RetrievalOrchestrator
@@ -60,7 +60,21 @@ async def get_current_user_id(authorization: Optional[str] = Header(None)) -> st
     return payload["user_id"]
 
 
-@router.post("/chat", response_model=ChatResponse)
+@router.post(
+    "/chat",
+    response_model=ChatResponse,
+    summary="Send a chat message",
+    description=(
+        "Unified endpoint that auto-classifies each message into MEMORY, QUESTION, "
+        "or BOTH. It persists user/assistant messages and may ingest memory, answer "
+        "a question, or do both in one call."
+    ),
+    responses={
+        200: {"description": "Chat processed successfully."},
+        401: {"description": "Missing, invalid, or expired token."},
+        404: {"description": "Authenticated user not found."}
+    }
+)
 async def chat_endpoint(
     request: ChatRequest,
     user_id: str = Depends(get_current_user_id)
@@ -219,10 +233,27 @@ class MessageResponse(BaseModel):
     memory_citations: Optional[list]
 
 
-@router.get("/sessions", response_model=List[SessionResponse])
+class SessionActionResponse(BaseModel):
+    """Simple response model for session actions."""
+    message: str
+
+
+@router.get(
+    "/sessions",
+    response_model=List[SessionResponse],
+    summary="List user sessions",
+    description="Return chat sessions for the authenticated user.",
+    responses={
+        200: {"description": "Sessions fetched successfully."},
+        401: {"description": "Missing, invalid, or expired token."}
+    }
+)
 async def get_user_sessions(
     user_id: str = Depends(get_current_user_id),
-    include_archived: bool = False
+    include_archived: bool = Query(
+        default=False,
+        description="Set true to include archived sessions in the result."
+    )
 ):
     """
     Get all chat sessions for the current user.
@@ -249,12 +280,22 @@ async def get_user_sessions(
     ]
 
 
-@router.get("/sessions/{session_id}/messages", response_model=List[MessageResponse])
+@router.get(
+    "/sessions/{session_id}/messages",
+    response_model=List[MessageResponse],
+    summary="Get session messages",
+    description="Return paginated messages for a specific session.",
+    responses={
+        200: {"description": "Messages fetched successfully."},
+        401: {"description": "Missing, invalid, or expired token."},
+        403: {"description": "Session does not belong to current user."}
+    }
+)
 async def get_session_messages(
-    session_id: str,
+    session_id: str = Path(..., description="Session UUID.", example="3a640334-9816-4f3b-8b4f-4dbf03b80229"),
     user_id: str = Depends(get_current_user_id),
-    limit: int = 50,
-    offset: int = 0
+    limit: int = Query(default=50, ge=1, le=500, description="Maximum number of messages to return."),
+    offset: int = Query(default=0, ge=0, description="Number of messages to skip.")
 ):
     """
     Get all messages for a specific chat session.
@@ -295,9 +336,19 @@ async def get_session_messages(
     ]
 
 
-@router.post("/sessions/{session_id}/archive")
+@router.post(
+    "/sessions/{session_id}/archive",
+    response_model=SessionActionResponse,
+    summary="Archive session",
+    description="Archive a chat session for the authenticated user.",
+    responses={
+        200: {"description": "Session archived."},
+        401: {"description": "Missing, invalid, or expired token."},
+        404: {"description": "Session not found."}
+    }
+)
 async def archive_session(
-    session_id: str,
+    session_id: str = Path(..., description="Session UUID.", example="3a640334-9816-4f3b-8b4f-4dbf03b80229"),
     user_id: str = Depends(get_current_user_id)
 ):
     """Archive a chat session."""
@@ -309,9 +360,19 @@ async def archive_session(
     return {"message": "Session archived successfully"}
 
 
-@router.delete("/sessions/{session_id}")
+@router.delete(
+    "/sessions/{session_id}",
+    response_model=SessionActionResponse,
+    summary="Delete session",
+    description="Delete a chat session and all associated messages.",
+    responses={
+        200: {"description": "Session deleted."},
+        401: {"description": "Missing, invalid, or expired token."},
+        404: {"description": "Session not found."}
+    }
+)
 async def delete_session(
-    session_id: str,
+    session_id: str = Path(..., description="Session UUID.", example="3a640334-9816-4f3b-8b4f-4dbf03b80229"),
     user_id: str = Depends(get_current_user_id)
 ):
     """Delete a chat session and all its messages."""

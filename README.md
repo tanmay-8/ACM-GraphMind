@@ -220,25 +220,375 @@ score = 0.4 × graph_relevance
 
 ## 📡 API Endpoints
 
+### Base URL
+
+- Local (frontend default): `http://localhost:8001`
+- FastAPI interactive docs: `/docs`
+- OpenAPI schema: `/openapi.json`
+- Standalone spec file: `docs/swagger.yaml`
+
 ### Authentication
-- `POST /auth/signup` - Create account
-- `POST /auth/login` - Get JWT token
-- `GET /auth/me` - Get current user
 
-### Chat
-- `POST /chat` - Send message (requires JWT)
-- `GET /sessions` - List chat sessions
-- `GET /sessions/{id}/messages` - Get conversation history
-- `POST /sessions/{id}/archive` - Archive session
-- `DELETE /sessions/{id}` - Delete session
+Most endpoints require a JWT in the `Authorization` header:
 
-### Example Request
+```http
+Authorization: Bearer <access_token>
+```
+
+### Error Format
+
+FastAPI errors follow this format:
+
+```json
+{
+  "detail": "Error message"
+}
+```
+
+---
+
+### `GET /`
+
+Root metadata endpoint.
+
+Response:
+
+```json
+{
+  "message": "Welcome to GraphMind API",
+  "version": "1.0.0",
+  "docs": "/docs",
+  "health": "/health",
+  "chat": "/chat"
+}
+```
+
+### `GET /health`
+
+Health check endpoint.
+
+Response:
+
+```json
+{
+  "status": "healthy",
+  "message": "API is running"
+}
+```
+
+---
+
+## 🔐 Auth API
+
+### `POST /auth/signup`
+
+Create a new user and return an access token.
+
+Request body:
+
+```json
+{
+  "email": "user@example.com",
+  "password": "secret123",
+  "full_name": "Tanmay Sharma"
+}
+```
+
+Validation:
+- `email` must be a valid email.
+- `password` minimum length is 6.
+- `full_name` minimum length is 1.
+
+Success response (`201`):
+
+```json
+{
+  "access_token": "<jwt>",
+  "token_type": "bearer",
+  "user_id": "f4a2fca4-39d0-4028-8fb5-4f0b84b6c9d5",
+  "email": "user@example.com",
+  "full_name": "Tanmay Sharma"
+}
+```
+
+Common errors:
+- `400`: Email already registered
+
+### `POST /auth/login`
+
+Authenticate an existing user.
+
+Request body:
+
+```json
+{
+  "email": "user@example.com",
+  "password": "secret123"
+}
+```
+
+Success response (`200`):
+
+```json
+{
+  "access_token": "<jwt>",
+  "token_type": "bearer",
+  "user_id": "f4a2fca4-39d0-4028-8fb5-4f0b84b6c9d5",
+  "email": "user@example.com",
+  "full_name": "Tanmay Sharma"
+}
+```
+
+Common errors:
+- `401`: Incorrect email or password
+
+### `GET /auth/me`
+
+Get the current authenticated user.
+
+Headers:
+- `Authorization: Bearer <token>`
+
+Success response (`200`):
+
+```json
+{
+  "user_id": "f4a2fca4-39d0-4028-8fb5-4f0b84b6c9d5",
+  "email": "user@example.com",
+  "full_name": "Tanmay Sharma",
+  "created_at": "2026-03-17T06:30:10.323919"
+}
+```
+
+Common errors:
+- `401`: Missing/invalid/expired token
+- `404`: User not found
+
+---
+
+## 💬 Chat API
+
+### `POST /chat`
+
+Unified endpoint for memory ingestion and question answering. Intent is auto-classified to one of:
+- `MEMORY`
+- `QUESTION`
+- `BOTH`
+
+Headers:
+- `Authorization: Bearer <token>`
+
+Request body:
+
+```json
+{
+  "user_id": "f4a2fca4-39d0-4028-8fb5-4f0b84b6c9d5",
+  "message": "I invested 50000 in HDFC Mutual Fund",
+  "conversation_id": null
+}
+```
+
+Response shape (`200`):
+
+```json
+{
+  "intent": "MEMORY | QUESTION | BOTH",
+  "answer": "optional assistant answer",
+  "memory_storage": {
+    "nodes_created": 0,
+    "relationships_created": 0,
+    "facts_created": 0,
+    "chunks_indexed": 0
+  },
+  "retrieval_metrics": {
+    "graph_query_ms": 0,
+    "vector_search_ms": 0,
+    "context_assembly_ms": 0,
+    "retrieval_ms": 0,
+    "llm_generation_ms": 0
+  },
+  "memory_citations": [
+    {
+      "node_type": "Fact",
+      "retrieval_score": 0.91,
+      "hop_distance": 1,
+      "snippet": "Investment in HDFC Mutual Fund",
+      "properties": {},
+      "score_breakdown": {
+        "graph_distance": 0.9,
+        "recency": 0.8,
+        "confidence": 0.9,
+        "reinforcement": 0.7
+      }
+    }
+  ],
+  "message": "Status message"
+}
+```
+
+Notes:
+- `answer`, `memory_storage`, `retrieval_metrics`, and `memory_citations` are optional depending on classified intent.
+- This endpoint also persists user and assistant messages to PostgreSQL sessions.
+
+Common errors:
+- `401`: Missing/invalid/expired token
+- `404`: User not found
+
+Example:
+
 ```bash
 curl -X POST http://localhost:8001/chat \
   -H "Authorization: Bearer <your-jwt-token>" \
   -H "Content-Type: application/json" \
-  -d '{"message": "I invested $50k in stocks"}'
+  -d '{
+    "user_id": "f4a2fca4-39d0-4028-8fb5-4f0b84b6c9d5",
+    "message": "How much have I invested this month?",
+    "conversation_id": null
+  }'
 ```
+
+### `GET /sessions`
+
+Get sessions for the current user.
+
+Headers:
+- `Authorization: Bearer <token>`
+
+Query params:
+- `include_archived` (boolean, default: `false`)
+
+Success response (`200`):
+
+```json
+[
+  {
+    "id": "3a640334-9816-4f3b-8b4f-4dbf03b80229",
+    "title": "New Chat",
+    "created_at": "2026-03-17T07:10:00.000000",
+    "updated_at": "2026-03-17T07:13:40.000000",
+    "is_archived": false,
+    "message_count": 8
+  }
+]
+```
+
+### `GET /sessions/{session_id}/messages`
+
+Get messages for a given session.
+
+Headers:
+- `Authorization: Bearer <token>`
+
+Path params:
+- `session_id` (UUID)
+
+Query params:
+- `limit` (int, default: `50`)
+- `offset` (int, default: `0`)
+
+Success response (`200`):
+
+```json
+[
+  {
+    "id": "43a39cc0-c3d6-4f95-9f3f-bcc66d3d8d45",
+    "session_id": "3a640334-9816-4f3b-8b4f-4dbf03b80229",
+    "role": "assistant",
+    "content": "Based on your memory graph...",
+    "intent": "QUESTION",
+    "created_at": "2026-03-17T07:13:40.000000",
+    "retrieval_time_ms": 120.4,
+    "llm_generation_time_ms": 502.7,
+    "nodes_retrieved": 5,
+    "memory_storage": null,
+    "memory_citations": []
+  }
+]
+```
+
+Common errors:
+- `403`: Session does not belong to authenticated user
+
+### `POST /sessions/{session_id}/archive`
+
+Archive a session.
+
+Headers:
+- `Authorization: Bearer <token>`
+
+Path params:
+- `session_id` (UUID)
+
+Success response (`200`):
+
+```json
+{
+  "message": "Session archived successfully"
+}
+```
+
+### `DELETE /sessions/{session_id}`
+
+Delete a session and all associated messages.
+
+Headers:
+- `Authorization: Bearer <token>`
+
+Path params:
+- `session_id` (UUID)
+
+Success response (`200`):
+
+```json
+{
+  "message": "Session deleted successfully"
+}
+```
+
+---
+
+## 🧠 Memory API
+
+### `GET /memory/mindmap`
+
+Returns the authenticated user's graph for visualization.
+
+Headers:
+- `Authorization: Bearer <token>`
+
+Success response (`200`):
+
+```json
+{
+  "nodes": [
+    {
+      "id": "fact_1",
+      "type": "Fact",
+      "label": "Invested in HDFC Mutual Fund",
+      "properties": {
+        "amount": 50000
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "rel_1",
+      "source": "user_1",
+      "target": "fact_1",
+      "type": "OWNS_MEMORY",
+      "label": "OWNS_MEMORY",
+      "properties": {}
+    }
+  ],
+  "total_nodes": 1,
+  "total_edges": 1
+}
+```
+
+Common errors:
+- `401`: Missing/invalid/expired token
+- `404`: User not found
+- `400`: User not linked to knowledge graph
 
 ---
 
