@@ -2,7 +2,7 @@
 Authentication Routes - Login, Signup, Token verification
 """
 
-from fastapi import APIRouter, HTTPException, status, Depends, Header
+from fastapi import APIRouter, HTTPException, status, Header
 from typing import Optional
 from api.models_auth import UserSignup, UserLogin, Token, UserResponse
 from services.auth.auth_service import auth_service
@@ -10,7 +10,17 @@ from services.auth.auth_service import auth_service
 router = APIRouter()
 
 
-@router.post("/signup", response_model=Token, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/signup",
+    response_model=Token,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create user account",
+    description="Register a new user and return a bearer JWT token.",
+    responses={
+        201: {"description": "User created and token issued."},
+        400: {"description": "Email already registered."}
+    }
+)
 async def signup(user_data: UserSignup):
     """
     Register a new user.
@@ -51,7 +61,16 @@ async def signup(user_data: UserSignup):
     )
 
 
-@router.post("/login", response_model=Token)
+@router.post(
+    "/login",
+    response_model=Token,
+    summary="Login user",
+    description="Authenticate with email/password and return a bearer JWT token.",
+    responses={
+        200: {"description": "Authentication successful."},
+        401: {"description": "Invalid credentials."}
+    }
+)
 async def login(credentials: UserLogin):
     """
     Authenticate user and return JWT token.
@@ -92,8 +111,23 @@ async def login(credentials: UserLogin):
     )
 
 
-@router.get("/me", response_model=UserResponse)
-async def get_current_user(authorization: Optional[str] = Header(None)):
+@router.get(
+    "/me",
+    response_model=UserResponse,
+    summary="Get current user",
+    description="Return profile information for the currently authenticated user.",
+    responses={
+        200: {"description": "Current user profile."},
+        401: {"description": "Missing, invalid, or expired token."},
+        404: {"description": "User not found."}
+    }
+)
+async def get_current_user(
+    authorization: Optional[str] = Header(
+        default=None,
+        description="Bearer token. Format: 'Bearer <access_token>'"
+    )
+):
     """
     Get current user information from JWT token.
     
