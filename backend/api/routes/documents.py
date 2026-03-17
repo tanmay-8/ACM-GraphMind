@@ -36,7 +36,6 @@ router = APIRouter()
 llm_extractor = LLMExtractor()
 graph_ingestion = GraphIngestion()
 user_service = UserService()
-user_service = UserService()
 
 
 # ── Authentication Helper ───────────────────────────────────────────────────
@@ -168,7 +167,9 @@ async def upload_document(
                 detail="Could not extract any text from the document"
             )
         
-        # Upload to S3
+        # Upload to S3 (best effort; extraction should still work if S3 is disabled)
+        s3_key = None
+        s3_url = None
         try:
             content_type = file.content_type or 'application/octet-stream'
             s3_key, s3_url = s3_storage.upload_document(
@@ -178,10 +179,7 @@ async def upload_document(
                 content_type=content_type
             )
         except ValueError as e:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to upload document to S3: {str(e)}"
-            )
+            metadata['s3_warning'] = str(e)
         
         return DocumentUploadResponse(
             success=True,
@@ -216,7 +214,7 @@ async def upload_document(
 )
 async def ingest_document(
     request: DocumentIngestionRequest,
-    user_id: str = Depends(get_current_user_id)
+    pg_user_id: str = Depends(get_current_user_id)
 ) -> DocumentIngestionResponse:
     """
     Ingest extracted document text into the knowledge graph.
@@ -235,11 +233,14 @@ async def ingest_document(
     """
     try:
         # Ensure user_id matches
-        if request.user_id != user_id:
+        if request.user_id != pg_user_id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Cannot ingest document for different user"
             )
+
+        # Use neo4j_user_id for graph extraction + ingestion consistency
+        neo4j_user_id = get_neo4j_user_id(pg_user_id)
         
         if not request.document_text.strip():
             raise HTTPException(
@@ -248,7 +249,7 @@ async def ingest_document(
             )
         
         # Process through LLM extractor (same as chat flow)
-        extraction_result = llm_extractor.extract(request.document_text, user_id)
+        extraction_result = llm_extractor.extract(request.document_text, neo4j_user_id)
         
         facts = extraction_result.get("facts", [])
         nodes = extraction_result.get("nodes", [])
@@ -256,11 +257,12 @@ async def ingest_document(
         
         # Ingest into graph via graph ingestion service
         ingestion_stats = graph_ingestion.ingest_memory(
-            user_id=user_id,
+            user_id=neo4j_user_id,
             message_text=f"Document: {request.document_name}",
             facts=facts,
             nodes=nodes,
-            relationships=relationships
+            relationships=relationships,
+            skip_contradiction_detection=True
         )
         
         return DocumentIngestionResponse(
@@ -355,7 +357,7 @@ async def upload_and_ingest_document(
                 detail="Could not extract text from document"
             )
         
-        # Upload to S3
+        # Upload to S3 (best effort; continue if disabled)
         try:
             content_type = file.content_type or 'application/octet-stream'
             s3_key, s3_url = s3_storage.upload_document(
@@ -368,24 +370,22 @@ async def upload_and_ingest_document(
             metadata['s3_key'] = s3_key
             metadata['s3_url'] = s3_url
         except ValueError as e:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to upload document to S3: {str(e)}"
-            )
+            metadata['s3_warning'] = str(e)
         
-        # Step 2: Process through LLM (same as chat) - use pg_user_id for consistency
-        extraction_result = llm_extractor.extract(extracted_text, pg_user_id)
+        # Step 2: Process through LLM using neo4j_user_id for consistency with chat flow
+        extraction_result = llm_extractor.extract(extracted_text, neo4j_user_id)
         facts = extraction_result.get("facts", [])
         nodes = extraction_result.get("nodes", [])
         relationships = extraction_result.get("relationships", [])
         
-        # Step 3: Ingest into graph - use pg_user_id to match existing data
+        # Step 3: Ingest into graph using neo4j_user_id to match existing chat data
         ingestion_stats = graph_ingestion.ingest_memory(
-            user_id=pg_user_id,
+            user_id=neo4j_user_id,
             message_text=f"Document: {filename}",
             facts=facts,
             nodes=nodes,
-            relationships=relationships
+            relationships=relationships,
+            skip_contradiction_detection=True
         )
         
         return DocumentIngestionResponse(

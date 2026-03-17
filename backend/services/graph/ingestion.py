@@ -39,7 +39,8 @@ class GraphIngestion:
         message_text: str,
         facts: List[Dict[str, Any]],
         nodes: List[Dict[str, Any]], 
-        relationships: List[Dict[str, Any]]
+        relationships: List[Dict[str, Any]],
+        skip_contradiction_detection: bool = False
     ) -> Dict[str, int]:
         """
         Ingest message, facts, nodes and relationships into the graph.
@@ -80,26 +81,30 @@ class GraphIngestion:
                         facts_created += 1
                 
                 # 4. Create/merge entity nodes
-                node_map = {}  # Track created nodes
+                node_map = {}  # Track created nodes: {type: [id1, id2, ...]}
                 for node in nodes:
                     self._merge_node(session, user_id, node)
                     nodes_created += 1
                     node_type = node.get("type")
                     node_id = node.get("properties", {}).get("id")
                     if node_type and node_id:
-                        node_map[node_type] = node_id
+                        if node_type not in node_map:
+                            node_map[node_type] = []
+                        node_map[node_type].append(node_id)
+                
                 
                 # 5. Create canonical relationships (truth layer)
-                transaction_id = node_map.get("Transaction")
-                asset_id = node_map.get("Asset")
+                # Link all transactions and assets (can be multiple)
+                transaction_ids = node_map.get("Transaction", [])
+                asset_ids = node_map.get("Asset", [])
                 
-                if transaction_id:
+                for transaction_id in transaction_ids:
                     # Core ownership: User made this transaction
                     self._link_user_made_transaction(session, user_id, transaction_id)
                     relationships_created += 1
                     
-                    if asset_id:
-                        # Core semantic: Transaction affects this asset
+                    # Link each transaction to all assets
+                    for asset_id in asset_ids:
                         self._link_transaction_affects_asset(session, user_id, transaction_id, asset_id)
                         relationships_created += 1
                 
@@ -110,24 +115,27 @@ class GraphIngestion:
                 
                 # 7. Link facts to structured nodes using CONFIRMS (evidence layer)
                 # Facts should CONFIRM structured data (Transaction, Asset, Goal)
-                transaction_id = node_map.get("Transaction")
-                asset_id = node_map.get("Asset")
-                goal_id = node_map.get("Goal")
+                transaction_ids = node_map.get("Transaction", [])
+                asset_ids = node_map.get("Asset", [])
+                goal_ids = node_map.get("Goal", [])
                 
                 for fact_id, _ in fact_ids:
-                    # Primary: Link fact to Transaction (if exists)
-                    if transaction_id:
-                        self._link_fact_confirms(session, user_id, fact_id, transaction_id, "Transaction")
+                    # Primary: Link fact to all Transaction nodes (if exist)
+                    if transaction_ids:
+                        for transaction_id in transaction_ids:
+                            self._link_fact_confirms(session, user_id, fact_id, transaction_id, "Transaction")
                         
-                        # Also link Fact to Asset via RELATES_TO for semantic recall
-                        if asset_id:
+                        # Also link Fact to all Assets via RELATES_TO for semantic recall
+                        for asset_id in asset_ids:
                             self._link_fact_to_node(session, user_id, fact_id, asset_id, "Asset")
                     
-                    # Secondary: Link fact to Asset/Goal (if exists and no transaction)
-                    elif asset_id:
-                        self._link_fact_confirms(session, user_id, fact_id, asset_id, "Asset")
-                    elif goal_id:
-                        self._link_fact_confirms(session, user_id, fact_id, goal_id, "Goal")
+                    # Secondary: Link fact to all Asset/Goal nodes (if exists and no transaction)
+                    elif asset_ids:
+                        for asset_id in asset_ids:
+                            self._link_fact_confirms(session, user_id, fact_id, asset_id, "Asset")
+                    elif goal_ids:
+                        for goal_id in goal_ids:
+                            self._link_fact_confirms(session, user_id, fact_id, goal_id, "Goal")
                     
                     # Fallback: Link to entities by name (for generic facts)
                     else:
@@ -136,10 +144,11 @@ class GraphIngestion:
                             if node_name:
                                 self._link_fact_to_entity_by_name(session, user_id, fact_id, node_name)
         
-                # 8. Detect and mark contradictions for new facts
-                for fact_id, fact_text in fact_ids:
-                    if fact_text:
-                        self._detect_and_mark_contradictions(session, user_id, fact_id, fact_text, nodes)
+                # 8. Detect and mark contradictions for new facts (skip for document ingestion)
+                if not skip_contradiction_detection:
+                    for fact_id, fact_text in fact_ids:
+                        if fact_text:
+                            self._detect_and_mark_contradictions(session, user_id, fact_id, fact_text, nodes)
         
         except Exception as e:
             print(f"Error during graph ingestion: {e}")

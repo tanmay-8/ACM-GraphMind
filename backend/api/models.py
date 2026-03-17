@@ -101,13 +101,6 @@ class DocumentIngestionResponse(BaseModel):
     document_name: str
     extracted_text: str
     extraction_stats: dict
-    llm_extraction: Optional[dict] = None  # Actual facts, entities, relationships from LLM
+    llm_extraction: Optional[dict] = None
     memory_storage: Optional[MemoryStorageResult] = None
-    retrieval_metrics: Optional[RetrievalMetrics] = None
     message: str
-    intent: IntentType = Field(..., description="Detected operation intent for this message.", example="QUESTION")
-    answer: Optional[str] = Field(default=None, description="Assistant answer for QUESTION/BOTH intents.")
-    memory_storage: Optional[MemoryStorageResult] = Field(default=None, description="Memory ingestion results for MEMORY/BOTH intents.")
-    retrieval_metrics: Optional[RetrievalMetrics] = Field(default=None, description="Retrieval and generation timings for QUESTION/BOTH intents.")
-    memory_citations: Optional[List[MemoryCitation]] = Field(default=None, description="Evidence citations backing the generated answer.")
-    message: str = Field(..., description="Operation status message.", example="Answer generated successfully.")

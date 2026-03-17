@@ -38,15 +38,20 @@ class S3Storage:
     
     def __init__(self):
         """Initialize S3 client with AWS credentials from environment."""
+        self.client = None
+        self.enabled = False
+        self.init_error: Optional[str] = None
         self.bucket_name = os.getenv('AWS_S3_BUCKET_NAME')
         self.region = os.getenv('AWS_S3_REGION', 'us-east-1')
         self.storage_path = os.getenv('AWS_S3_STORAGE_PATH', 'graphmind')
         
         if not self.bucket_name:
-            raise ValueError(
+            self.init_error = (
                 "AWS_S3_BUCKET_NAME environment variable is required. "
                 "Set it to your S3 bucket name."
             )
+            print(f"S3 storage disabled: {self.init_error}")
+            return
         
         # Initialize S3 client
         try:
@@ -59,14 +64,22 @@ class S3Storage:
             
             # Test connection by listing buckets
             self.client.head_bucket(Bucket=self.bucket_name)
+            self.enabled = True
         except ClientError as e:
             error_code = e.response['Error']['Code']
             if error_code == '404':
-                raise ValueError(f"S3 bucket '{self.bucket_name}' does not exist")
+                self.init_error = f"S3 bucket '{self.bucket_name}' does not exist"
             elif error_code == '403':
-                raise ValueError(f"Access denied to S3 bucket '{self.bucket_name}'. Check AWS credentials.")
+                self.init_error = f"Access denied to S3 bucket '{self.bucket_name}'. Check AWS credentials."
             else:
-                raise ValueError(f"Failed to connect to S3: {str(e)}")
+                self.init_error = f"Failed to connect to S3: {str(e)}"
+            print(f"S3 storage disabled: {self.init_error}")
+
+    def _ensure_enabled(self):
+        """Ensure S3 is enabled before performing an operation."""
+        if not self.enabled or not self.client:
+            message = self.init_error or "S3 storage is disabled"
+            raise ValueError(message)
     
     def upload_document(
         self,
@@ -92,6 +105,7 @@ class S3Storage:
         Raises:
             ValueError: If upload fails
         """
+        self._ensure_enabled()
         try:
             # Create organized S3 key: graphmind/user123/2024-03-17T14-30-45_document.pdf
             timestamp = datetime.utcnow().strftime('%Y-%m-%dT%H-%M-%S')
@@ -136,6 +150,7 @@ class S3Storage:
         Raises:
             ValueError: If download fails
         """
+        self._ensure_enabled()
         try:
             response = self.client.get_object(Bucket=self.bucket_name, Key=s3_key)
             return response['Body'].read()
@@ -159,6 +174,7 @@ class S3Storage:
         Raises:
             ValueError: If deletion fails
         """
+        self._ensure_enabled()
         try:
             self.client.delete_object(Bucket=self.bucket_name, Key=s3_key)
             return True
@@ -181,6 +197,7 @@ class S3Storage:
         Raises:
             ValueError: If URL generation fails
         """
+        self._ensure_enabled()
         try:
             url = self.client.generate_presigned_url(
                 'get_object',
