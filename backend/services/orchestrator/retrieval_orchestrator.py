@@ -1,17 +1,8 @@
-"""
-Retrieval Orchestrator - Coordinates query retrieval and answer generation.
-
-Flow:
-1. Classify query complexity
-2. Retrieve from graph (adaptive depth)
-3. Assemble context
-4. Generate answer using LLM
-
-TODO: Add vector retrieval when implemented
-"""
+"""Retrieval orchestrator with reciprocal rank fusion (RRF) for hybrid context."""
 
 from typing import Dict, Any, List, Tuple
 import time
+from config.settings import Settings
 from services.graph.retrieval import GraphRetrieval
 from services.llm.answer_generator import AnswerGenerator
 from services.vector.retrieval import VectorRetrieval
@@ -20,8 +11,9 @@ from services.vector.retrieval import VectorRetrieval
 class RetrievalOrchestrator:
     """
     Orchestrates complete query retrieval and answer generation workflow.
-    Currently uses graph-only retrieval.
     """
+
+    RRF_K = 60
     
     def __init__(self):
         """Initialize all required services."""
@@ -59,10 +51,11 @@ class RetrievalOrchestrator:
             query=query
         )
         
-        # Step 3: Assemble context (with timing)
+        # Step 3: Assemble context with reciprocal rank fusion
         context_start = time.time()
-        # Format graph context for LLM
-        formatted_context = graph_context  # Already formatted by retrieval service
+        fused_results = self._fuse_rrf(graph_context, vector_context)
+        formatted_context = [item["payload"] for item in fused_results if item["source"] == "graph"]
+        fused_vector_context = [item["payload"] for item in fused_results if item["source"] == "vector"]
         context_assembly_ms = (time.time() - context_start) * 1000
         
         # Step 4: Generate answer using LLM (with timing)
@@ -70,7 +63,7 @@ class RetrievalOrchestrator:
         answer = self.answer_generator.generate(
             query=query,
             graph_context=formatted_context,
-            vector_context=vector_context
+            vector_context=fused_vector_context
         )
         llm_generation_ms = (time.time() - llm_start) * 1000
         
@@ -86,7 +79,7 @@ class RetrievalOrchestrator:
         }
         
         # Step 6: Format memory citations with scores
-        memory_citations = self._format_memory_citations(formatted_context, vector_context)
+        memory_citations = self._format_memory_citations(fused_results)
         
         # Step 7: DEFERRED REINFORCEMENT - Update cited nodes after answer generation
         cited_node_ids = [node["properties"]["id"] for node in formatted_context[:10] 
@@ -95,63 +88,95 @@ class RetrievalOrchestrator:
             self.graph_retrieval.reinforce_cited_nodes(user_id, cited_node_ids)
         
         return answer, metrics, memory_citations
-    
-    def _format_memory_citations(
-        self, 
+
+    def _fuse_rrf(
+        self,
         graph_context: List[Dict[str, Any]],
         vector_context: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
+        """Fuse graph and vector lists using reciprocal rank fusion."""
+        fused: List[Dict[str, Any]] = []
+
+        for rank, node in enumerate(graph_context, start=1):
+            rrf_score = 1.0 / (self.RRF_K + rank)
+            fused.append(
+                {
+                    "source": "graph",
+                    "payload": node,
+                    "fusion_score": round(rrf_score, 6),
+                    "rank": rank
+                }
+            )
+
+        for rank, chunk in enumerate(vector_context, start=1):
+            chunk["retrieval_score"] = chunk.get("retrieval_score", chunk.get("similarity", 0.0))
+            rrf_score = 1.0 / (self.RRF_K + rank)
+            fused.append(
+                {
+                    "source": "vector",
+                    "payload": chunk,
+                    "fusion_score": round(rrf_score, 6),
+                    "rank": rank
+                }
+            )
+
+        fused.sort(key=lambda item: item.get("fusion_score", 0.0), reverse=True)
+        return fused[: Settings.DEFAULT_TOP_K * 2]
+    
+    def _format_memory_citations(self, fused_results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
         Format memory citations with retrieval scores for explainability.
         
-        Args:
-            graph_context: Retrieved graph nodes with scores
-            
         Returns:
             List of formatted memory citations with snippets and hop distance
         """
         citations = []
         
-        # Add graph nodes as citations with scores (top 10)
-        for node in graph_context[:10]:
-            node_type = node.get("type", "Unknown")
-            props = node.get("properties", {})
-            score = node.get("retrieval_score", 0.0)
-            snippet = node.get("snippet", "")
-            hop_distance = node.get("score_breakdown", {}).get("hop_distance", "N/A")
-            
-            citation = {
-                "node_type": node_type,
-                "retrieval_score": score,
-                "hop_distance": hop_distance,
-                "snippet": snippet,
-                "properties": {},
-                "score_breakdown": node.get("score_breakdown", None)
-            }
-            
-            # Include relevant properties based on node type
-            if node_type == "Fact":
-                citation["properties"] = {
-                    "text": props.get("text", ""),
-                    "confidence": props.get("confidence", 0.0),
-                    "reinforcement_count": props.get("reinforcement_count", 0)
+        for item in fused_results:
+            if item.get("source") == "graph":
+                node = item.get("payload", {})
+                node_type = node.get("type", "Unknown")
+                props = node.get("properties", {})
+                score = node.get("retrieval_score", item.get("fusion_score", 0.0))
+                snippet = node.get("snippet", "")
+                hop_distance = node.get("score_breakdown", {}).get("hop_distance", "N/A")
+
+                citation = {
+                    "node_type": node_type,
+                    "retrieval_score": score,
+                    "hop_distance": hop_distance,
+                    "snippet": snippet,
+                    "properties": {},
+                    "score_breakdown": {
+                        **(node.get("score_breakdown", {}) or {}),
+                        "rrf_score": item.get("fusion_score", 0.0),
+                        "source": "graph",
+                        "rank": item.get("rank")
+                    }
                 }
-            elif node_type == "Transaction":
-                citation["properties"] = {
-                    "amount": props.get("amount", 0),
-                    "transaction_type": props.get("transaction_type", ""),
-                    "confidence": props.get("confidence", 0.0)
-                }
-            elif node_type in ["Asset", "Goal", "Entity"]:
-                citation["properties"] = {
-                    k: v for k, v in props.items() 
-                    if k in ["name", "text", "confidence", "id"]
-                }
-            
-            citations.append(citation)
-        
-        # Add vector chunks as citations (top 5)
-        for chunk in vector_context[:5]:
+
+                if node_type == "Fact":
+                    citation["properties"] = {
+                        "text": props.get("text", ""),
+                        "confidence": props.get("confidence", 0.0),
+                        "reinforcement_count": props.get("reinforcement_count", 0)
+                    }
+                elif node_type == "Transaction":
+                    citation["properties"] = {
+                        "amount": props.get("amount", 0),
+                        "transaction_type": props.get("transaction_type", ""),
+                        "confidence": props.get("confidence", 0.0)
+                    }
+                elif node_type in ["Asset", "Goal", "Entity"]:
+                    citation["properties"] = {
+                        key: value for key, value in props.items()
+                        if key in ["name", "text", "confidence", "id"]
+                    }
+
+                citations.append(citation)
+                continue
+
+            chunk = item.get("payload", {})
             citations.append(
                 {
                     "node_type": "DocumentChunk",
@@ -164,7 +189,10 @@ class RetrievalOrchestrator:
                         "source": "vector"
                     },
                     "score_breakdown": {
-                        "vector_similarity": chunk.get("similarity", 0.0)
+                        "vector_similarity": chunk.get("similarity", 0.0),
+                        "rrf_score": item.get("fusion_score", 0.0),
+                        "source": "vector",
+                        "rank": item.get("rank")
                     }
                 }
             )
