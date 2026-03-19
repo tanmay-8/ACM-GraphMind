@@ -50,6 +50,7 @@ class MemoryCitation(BaseModel):
         default=None,
         description="Optional weighted score components: graph_distance, recency, confidence, reinforcement."
     )
+    source: str = Field(default="hybrid", description="Source of the citation: 'graph', 'vector', or 'hybrid'.", example="graph")
 
 
 class MemoryStorageResult(BaseModel):

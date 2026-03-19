@@ -23,7 +23,7 @@ from services.graph.query_understanding import QueryUnderstanding, RetrievalMode
 class GraphRetrieval:
     """
     Production-grade graph retrieval with controlled traversal.
-    
+
     Design Principles:
     - No wildcard path explosion
     - Mode-based targeted queries
@@ -31,7 +31,7 @@ class GraphRetrieval:
     - Strict user isolation
     - O(edges) complexity, not O(paths)
     """
-    
+
     # Configurable scoring weights (sum = 1.0)
     SCORE_WEIGHTS = {
         "graph_distance": 0.4,
@@ -39,10 +39,10 @@ class GraphRetrieval:
         "confidence": 0.2,
         "reinforcement": 0.1
     }
-    
+
     # Recency decay parameter
     RECENCY_DECAY_LAMBDA = 0.1  # Exponential decay rate
-    
+
     def __init__(self):
         """Initialize Neo4j connection and query understanding."""
         try:
@@ -54,66 +54,67 @@ class GraphRetrieval:
         except Exception as e:
             print(f"Warning: Could not connect to Neo4j: {e}")
             self.driver = None
-        
+
         self.query_understanding = QueryUnderstanding()
-    
+
     def retrieve(
-        self, 
-        user_id: str, 
-        query: str, 
+        self,
+        user_id: str,
+        query: str,
         max_depth: int = 3
     ) -> Tuple[List[Dict[str, Any]], float]:
         """
         Retrieve relevant graph context using controlled mode-based queries.
-        
+
         Args:
             user_id: User identifier
             query: User's query text
             max_depth: Maximum hops (unused, kept for compatibility)
-            
+
         Returns:
             Tuple of (retrieved_nodes, retrieval_time_ms)
         """
         if not self.driver:
             print("Warning: Neo4j driver not initialized, returning empty results")
             return [], 0.0
-        
+
         start_time = time.time()
         retrieved_nodes = []
-        
+
         try:
             with self.driver.session() as session:
                 # 1. Classify query mode
-                mode, recommended_depth = self.query_understanding.classify_query(query)
+                mode, recommended_depth = self.query_understanding.classify_query(
+                    query)
                 print(f"Query mode: {mode.value}, depth: {recommended_depth}")
-                
+
                 # 2. Extract timeline filter (optional)
                 start_date = self.query_understanding.extract_timeline(query)
-                
+
                 # 3. Execute mode-specific retrieval
                 raw_nodes = self._execute_mode_based_retrieval(
                     session, user_id, mode, start_date, recommended_depth
                 )
-                
+
                 # 4. Calculate real hop distances from User node
                 nodes_with_hops = self._calculate_hop_distances(
                     session, user_id, raw_nodes
                 )
-                
+
                 # 5. Apply scoring and ranking
                 retrieved_nodes = self._score_and_rank_nodes(
                     nodes_with_hops, query
                 )
-        
+
         except Exception as e:
             print(f"Error during graph retrieval: {e}")
             import traceback
             traceback.print_exc()
-        
+
         retrieval_time_ms = (time.time() - start_time) * 1000
-        
+
         return retrieved_nodes, retrieval_time_ms
-    
+
     def _serialize_neo4j_types(self, obj: Any) -> Any:
         """Convert Neo4j types to JSON-serializable Python types."""
         if isinstance(obj, DateTime):
@@ -124,7 +125,7 @@ class GraphRetrieval:
             return [self._serialize_neo4j_types(item) for item in obj]
         else:
             return obj
-    
+
     def _execute_mode_based_retrieval(
         self,
         session,
@@ -135,17 +136,17 @@ class GraphRetrieval:
     ) -> List[Dict[str, Any]]:
         """
         Execute controlled retrieval based on query mode.
-        
+
         NO WILDCARD PATHS - Each mode has specific traversal.
         """
         # Build timeline filter clause
         timeline_filter = ""
         params = {"user_id": user_id}
-        
+
         if start_date:
             timeline_filter = "AND n.timestamp >= $start_date"
             params["start_date"] = start_date
-        
+
         if mode == RetrievalMode.DIRECT_LOOKUP:
             # Simple entity lookup (e.g., "What assets do I own?")
             query = f"""
@@ -161,7 +162,7 @@ class GraphRetrieval:
             RETURN DISTINCT n
             LIMIT 50
             """
-        
+
         elif mode == RetrievalMode.AGGREGATION:
             # Aggregation queries (e.g., "How much have I invested?")
             query = f"""
@@ -179,7 +180,7 @@ class GraphRetrieval:
             RETURN DISTINCT n
             LIMIT 100
             """
-        
+
         elif mode == RetrievalMode.RELATIONAL_REASONING:
             # Multi-hop reasoning (e.g., "Is investment aligned with goal?")
             query = f"""
@@ -202,7 +203,7 @@ class GraphRetrieval:
             RETURN DISTINCT n
             LIMIT 150
             """
-        
+
         else:
             # Fallback to direct lookup
             query = """
@@ -211,9 +212,9 @@ class GraphRetrieval:
             RETURN t as n
             LIMIT 50
             """
-        
+
         result = session.run(query, **params)
-        
+
         # Format nodes
         nodes = []
         for record in result:
@@ -224,10 +225,10 @@ class GraphRetrieval:
                     "properties": self._serialize_neo4j_types(dict(node)),
                     "neo4j_id": node.id  # Store Neo4j internal ID for hop calculation
                 })
-        
+
         print(f"[DEBUG] Mode: {mode.value}, Retrieved {len(nodes)} nodes")
         return nodes
-    
+
     def _calculate_hop_distances(
         self,
         session,
@@ -236,16 +237,16 @@ class GraphRetrieval:
     ) -> List[Dict[str, Any]]:
         """
         Calculate real hop distance from User node to each retrieved node.
-        
+
         Uses shortestPath() for accurate graph distance.
         """
         nodes_with_hops = []
-        
+
         for node in nodes:
             node_id = node["properties"].get("id")
             if not node_id:
                 continue
-            
+
             # Calculate shortest path length
             hop_query = """
             MATCH (u:User {id: $user_id})
@@ -253,35 +254,40 @@ class GraphRetrieval:
             MATCH path = shortestPath((u)-[*1..5]-(n))
             RETURN length(path) as hops
             """
-            
+
             try:
-                result = session.run(hop_query, user_id=user_id, node_id=node_id)
+                result = session.run(
+                    hop_query, user_id=user_id, node_id=node_id)
                 record = result.single()
-                hops = record["hops"] if record else 3  # Default to 3 if no path
+                # Default to 3 if no path
+                hops = record["hops"] if record else 3
             except:
                 hops = 3  # Fallback
-            
+
             node["hop_distance"] = hops
             nodes_with_hops.append(node)
-        
-        print(f"[DEBUG] Calculated hops for {len(nodes_with_hops)}/{len(nodes)} nodes")
+
+        print(
+            f"[DEBUG] Calculated hops for {len(nodes_with_hops)}/{len(nodes)} nodes")
         return nodes_with_hops
-    
+
     def _score_and_rank_nodes(
-        self, 
-        nodes: List[Dict[str, Any]], 
+        self,
+        nodes: List[Dict[str, Any]],
         query: str
     ) -> List[Dict[str, Any]]:
         """
-        Score and rank nodes using normalized multi-factor scoring.
-        
-        New Formula (all components normalized 0-1):
-        score = w_graph × graph_score + 
+        Score and rank nodes using normalized multi-factor scoring with query relevance.
+
+        Formula (all components normalized 0-1):
+        score = w_relevance × relevance_score +
+                w_graph × graph_score + 
                 w_recency × recency_score + 
                 w_confidence × confidence +
                 w_reinforcement × reinforcement_score
-        
+
         Where:
+        - relevance_score = keyword match similarity to query
         - graph_score = 1 / (hops + 1)
         - recency_score = exp(-λ × days_ago)
         - confidence = node.confidence
@@ -289,110 +295,139 @@ class GraphRetrieval:
         """
         scored_nodes = []
         now = datetime.now(timezone.utc)
-        
+
+        # Extract query keywords for relevance matching
+        query_keywords = self.query_understanding.extract_query_keywords(query)
+        query_keywords_lower = [kw.lower() for kw in query_keywords]
+
         for node in nodes:
             props = node.get("properties", {})
             node_type = node.get("type", "Unknown")
-            
+
             # Skip User nodes from ranking
             if node_type == "User":
                 continue
-            
+
+            # Calculate relevance score based on keyword matching
+            relevance_score = self._calculate_relevance_score(
+                node, query_keywords_lower, query.lower())
+            # Extract query keywords for relevance matching
+            query_keywords = self.query_understanding.extract_query_keywords(
+                query)
+            query_keywords_lower = [kw.lower() for kw in query_keywords]
+
+            # Calculate relevance score based on keyword matching
+            relevance_score = self._calculate_relevance_score(
+                node, query_keywords_lower, query.lower()
+            )
+
             # 1. Graph Distance Score (inverse of hops)
             hops = node.get("hop_distance", 3)
             graph_score = 1.0 / (hops + 1)
-            
+
             # 2. Recency Score (exponential decay)
             recency_score = 0.5  # Default
             last_reinforced = props.get("last_reinforced")
             if last_reinforced:
                 if isinstance(last_reinforced, str):
                     try:
-                        last_dt = datetime.fromisoformat(last_reinforced.replace("Z", "+00:00"))
-                        days_ago = (now - last_dt).total_seconds() / 86400  # Days as float
-                        recency_score = math.exp(-self.RECENCY_DECAY_LAMBDA * days_ago)
+                        last_dt = datetime.fromisoformat(
+                            last_reinforced.replace("Z", "+00:00"))
+                        days_ago = (now - last_dt).total_seconds() / \
+                            86400  # Days as float
+                        recency_score = math.exp(
+                            -self.RECENCY_DECAY_LAMBDA * days_ago)
                     except:
                         pass
-            
+
             # 3. Confidence Score (already normalized 0-1)
             confidence = float(props.get("confidence", 0.5))
-            
+
             # 4. Reinforcement Score (logarithmic scaling)
             reinforcement_count = int(props.get("reinforcement_count", 0))
             if reinforcement_count > 0:
-                reinforcement_score = min(1.0, math.log(1 + reinforcement_count) / math.log(10))
+                reinforcement_score = min(1.0, math.log(
+                    1 + reinforcement_count) / math.log(10))
             else:
                 reinforcement_score = 0.0
-            
-            # Calculate weighted final score
+
+            # Calculate weighted final score with relevance boosting
             final_score = (
+                0.3 * relevance_score +  # NEW: Query relevance has high priority
                 self.SCORE_WEIGHTS["graph_distance"] * graph_score +
                 self.SCORE_WEIGHTS["recency"] * recency_score +
                 self.SCORE_WEIGHTS["confidence"] * confidence +
                 self.SCORE_WEIGHTS["reinforcement"] * reinforcement_score
             )
-            
+
             # Add scoring details to node
             node["retrieval_score"] = round(final_score, 3)
             node["score_breakdown"] = {
+                "relevance": round(relevance_score, 3),
                 "graph_distance": round(graph_score, 3),
                 "recency": round(recency_score, 3),
                 "confidence": round(confidence, 3),
                 "reinforcement": round(reinforcement_score, 3),
                 "hop_distance": hops
             }
-            
+
             # Add snippet for explainability
             node["snippet"] = self._create_snippet(node_type, props)
-            
+
             scored_nodes.append(node)
-        
+
+        # Filter out low-relevance nodes (< 0.1 score) to reduce noise
+        scored_nodes = [n for n in scored_nodes if n.get(
+            "retrieval_score", 0) >= 0.1]
+
         # Sort by score descending
-        scored_nodes.sort(key=lambda x: x.get("retrieval_score", 0), reverse=True)
-        
-        print(f"[DEBUG] Scored and ranked {len(scored_nodes)} nodes (top score: {scored_nodes[0]['retrieval_score'] if scored_nodes else 'N/A'})")
+        scored_nodes.sort(key=lambda x: x.get(
+            "retrieval_score", 0), reverse=True)
+
+        print(
+            f"[DEBUG] Scored and ranked {len(scored_nodes)} nodes (top score: {scored_nodes[0]['retrieval_score'] if scored_nodes else 'N/A'})")
         return scored_nodes
-    
+
     def _create_snippet(self, node_type: str, props: Dict[str, Any]) -> str:
         """Create human-readable snippet for node."""
         if node_type == "Transaction":
             amount = props.get("amount", 0)
             tx_type = props.get("transaction_type", "transaction")
             return f"{tx_type.capitalize()} of ₹{amount:,.0f}"
-        
+
         elif node_type == "Asset":
             name = props.get("name", "Unknown")
             asset_type = props.get("asset_type", "asset")
             return f"{name} ({asset_type})"
-        
+
         elif node_type == "Fact":
             text = props.get("text", "")
             return text[:60] + "..." if len(text) > 60 else text
-        
+
         elif node_type == "Goal":
             name = props.get("name", "Unknown goal")
             return f"Goal: {name}"
-        
+
         elif node_type == "Message":
             text = props.get("text", "")
             return text[:50] + "..." if len(text) > 50 else text
-        
+
         else:
             return props.get("name", props.get("text", node_type))
-    
+
     def reinforce_cited_nodes(self, user_id: str, node_ids: List[str]):
         """
         Update reinforcement for nodes cited in LLM answer.
-        
+
         Called AFTER answer generation (deferred reinforcement).
-        
+
         Args:
             user_id: User identifier
             node_ids: List of node IDs that were cited in answer
         """
         if not self.driver or not node_ids:
             return
-        
+
         try:
             with self.driver.session() as session:
                 query = """
@@ -402,30 +437,30 @@ class GraphRetrieval:
                     n.reinforcement_count = coalesce(n.reinforcement_count, 0) + 1
                 RETURN count(n) as updated_count
                 """
-                
+
                 result = session.run(query, user_id=user_id, node_ids=node_ids)
                 record = result.single()
                 count = record["updated_count"] if record else 0
                 print(f"Reinforced {count} cited nodes")
-        
+
         except Exception as e:
             print(f"Error reinforcing nodes: {e}")
-    
+
     def detect_contradictions(self, user_id: str, new_fact_text: str, entity_name: str) -> List[Dict[str, Any]]:
         """
         Detect contradictions with existing facts about the same entity.
-        
+
         Args:
             user_id: User identifier
             new_fact_text: The new fact text to check
             entity_name: The entity this fact relates to
-            
+
         Returns:
             List of potentially contradicting facts
         """
         if not self.driver:
             return []
-        
+
         try:
             with self.driver.session() as session:
                 # Find existing facts about the same entity with strict user isolation
@@ -437,14 +472,14 @@ class GraphRetrieval:
                 ORDER BY f.timestamp DESC
                 LIMIT 5
                 """
-                
+
                 result = session.run(
                     query,
                     user_id=user_id,
                     new_fact_text=new_fact_text,
                     entity_name=entity_name
                 )
-                
+
                 contradictions = []
                 for record in result:
                     contradictions.append({
@@ -452,17 +487,17 @@ class GraphRetrieval:
                         "fact_text": record["fact_text"],
                         "confidence": record["confidence"]
                     })
-                
+
                 return contradictions
-        
+
         except Exception as e:
             print(f"Error in contradiction detection: {e}")
             return []
-    
+
     def mark_contradiction(self, old_fact_id: str, new_fact_id: str, user_id: str, reduce_confidence: bool = True):
         """
         Mark two facts as contradicting and optionally reduce confidence of old fact.
-        
+
         Args:
             old_fact_id: ID of the older fact
             new_fact_id: ID of the newer fact
@@ -471,7 +506,7 @@ class GraphRetrieval:
         """
         if not self.driver:
             return
-        
+
         try:
             with self.driver.session() as session:
                 query = """
@@ -479,18 +514,77 @@ class GraphRetrieval:
                 MATCH (new:Fact {id: $new_fact_id, user_id: $user_id})
                 MERGE (old)-[:CONTRADICTS]->(new)
                 """
-                
+
                 if reduce_confidence:
                     query += """
                     SET old.confidence = old.confidence * 0.5
                     """
-                
-                session.run(query, old_fact_id=old_fact_id, new_fact_id=new_fact_id, user_id=user_id)
-                print(f"Marked contradiction between {old_fact_id} and {new_fact_id}")
-        
+
+                session.run(query, old_fact_id=old_fact_id,
+                            new_fact_id=new_fact_id, user_id=user_id)
+                print(
+                    f"Marked contradiction between {old_fact_id} and {new_fact_id}")
+
         except Exception as e:
             print(f"Error marking contradiction: {e}")
-    
+
+    def _calculate_relevance_score(
+        self,
+        node: Dict[str, Any],
+        query_keywords: List[str],
+        query_lower: str
+    ) -> float:
+        """
+        Calculate query relevance score for a node (0-1).
+
+        Matches keywords against node properties to filter for query-relevant evidence.
+        Higher score = more relevant to the query.
+        """
+        if not query_keywords:
+            return 0.5  # Default to neutral if no keywords
+
+        props = node.get("properties", {})
+        node_type = node.get("type", "Unknown")
+
+        # Collect all text fields from the node with importance weights
+        text_fields = []
+
+        if node_type == "Transaction":
+            # Check transaction type and description
+            text_fields.append((props.get("transaction_type", ""), 2.0))
+            text_fields.append((props.get("description", ""), 1.0))
+        elif node_type == "Asset":
+            # Check asset name and type (name is most important)
+            text_fields.append((props.get("name", ""), 3.0))
+            text_fields.append((props.get("asset_type", ""), 2.0))
+        elif node_type == "Fact":
+            # Check fact text content
+            text_fields.append((props.get("text", ""), 2.0))
+        elif node_type == "Goal":
+            # Check goal name
+            text_fields.append((props.get("name", ""), 2.0))
+        elif node_type == "Message":
+            # Check message content
+            text_fields.append((props.get("text", ""), 1.5))
+
+        # Calculate keyword match score with weights
+        matches = 0.0
+        max_possible = float(len(query_keywords))
+
+        for text, weight in text_fields:
+            if not text:
+                continue
+            text_lower = str(text).lower()
+            for kw in query_keywords:
+                if kw in text_lower:
+                    matches += weight
+                    break  # Count each keyword once per field
+
+        # Normalize to 0-1 range
+        relevance_score = min(1.0, matches / max(1.0, max_possible))
+
+        return relevance_score
+
     def close(self):
         """Close Neo4j connection."""
         if self.driver:

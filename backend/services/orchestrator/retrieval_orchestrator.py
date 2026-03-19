@@ -152,6 +152,7 @@ class RetrievalOrchestrator:
                     "retrieval_score": score,
                     "hop_distance": hop_distance,
                     "snippet": snippet,
+                    "source": "graph",
                     "properties": {},
                     "score_breakdown": {
                         **(node.get("score_breakdown", {}) or {}),
@@ -189,6 +190,7 @@ class RetrievalOrchestrator:
                     "retrieval_score": chunk.get("retrieval_score", chunk.get("similarity", 0.0)),
                     "hop_distance": "vector",
                     "snippet": chunk.get("text", "")[:120],
+                    "source": "vector",
                     "properties": {
                         "chunk_id": chunk.get("id"),
                         "similarity": chunk.get("similarity", 0.0),

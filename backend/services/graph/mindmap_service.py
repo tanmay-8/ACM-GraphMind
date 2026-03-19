@@ -181,6 +181,108 @@ class MindmapService:
 
         return nodes, edges
 
+    def delete_user_graph(self, user_id: str) -> Dict[str, Any]:
+        """
+        Delete all nodes and relationships for a user from Neo4j.
+
+        Args:
+            user_id: User identifier
+
+        Returns:
+            Dictionary with deletion summary
+        """
+        if not self.driver:
+            return {"success": False, "message": "Neo4j connection unavailable"}
+
+        try:
+            with self.driver.session() as session:
+                # Delete all relationships and nodes for user
+                delete_query = """
+                MATCH (n)
+                WHERE n.user_id = $user_id OR (n:User AND n.id = $user_id)
+                DETACH DELETE n
+                RETURN count(n) as deleted_nodes
+                """
+
+                result = session.run(delete_query, user_id=user_id)
+                record = result.single()
+                deleted_count = record["deleted_nodes"] if record else 0
+
+                return {
+                    "success": True,
+                    "message": f"Deleted {deleted_count} nodes from knowledge graph",
+                    "deleted_nodes": deleted_count
+                }
+
+        except Exception as e:
+            print(f"Error deleting user graph: {e}")
+            return {
+                "success": False,
+                "message": f"Error deleting knowledge graph: {str(e)}",
+                "deleted_nodes": 0
+            }
+
+    def delete_user_vectors(self, user_id: str) -> Dict[str, Any]:
+        """
+        Delete all vector entries for a user from Milvus.
+
+        Args:
+            user_id: User identifier
+
+        Returns:
+            Dictionary with deletion summary
+        """
+        if not self.milvus_service:
+            return {"success": False, "message": "Milvus service unavailable"}
+
+        try:
+            # Get count before deletion
+            count_before = self.milvus_service.get_user_vectors_count(user_id)
+
+            # Delete vectors
+            success = self.milvus_service.delete_user_vectors(user_id)
+
+            if success:
+                return {
+                    "success": True,
+                    "message": f"Deleted {count_before} vectors from Milvus",
+                    "deleted_vectors": count_before
+                }
+            else:
+                return {
+                    "success": False,
+                    "message": "Failed to delete vectors from Milvus",
+                    "deleted_vectors": 0
+                }
+        except Exception as e:
+            print(f"Error deleting user vectors: {e}")
+            return {
+                "success": False,
+                "message": f"Error deleting vectors: {str(e)}",
+                "deleted_vectors": 0
+            }
+
+    def get_user_vectors(self, user_id: str, limit: int = 100) -> List[Dict]:
+        """
+        Get all vector entries for a user.
+
+        Args:
+            user_id: User identifier
+            limit: Maximum number of vectors to return
+
+        Returns:
+            List of vector entry dictionaries
+        """
+        if not self.milvus_service:
+            return []
+
+        try:
+            vectors = self.milvus_service.get_user_vectors(user_id, limit=limit)
+            return vectors
+        except Exception as e:
+            print(f"Error retrieving user vectors: {e}")
+            return []
+
     def _serialize_properties(self, properties: Dict[str, Any]) -> Dict[str, Any]:
         """Serialize Neo4j types to JSON-compatible format."""
         from neo4j.time import DateTime

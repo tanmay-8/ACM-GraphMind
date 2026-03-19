@@ -152,7 +152,10 @@ class VectorRetrieval:
 
                     score = self._cosine_similarity(
                         query_vector, [float(v) for v in embedding])
-                    if score <= 0:
+
+                    # Filter out low similarity results (threshold = 0.3)
+                    # This prevents returning irrelevant chunks
+                    if score <= 0.3:
                         continue
 
                     candidates.append(
