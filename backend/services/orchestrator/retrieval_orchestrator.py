@@ -1,6 +1,4 @@
 """Retrieval orchestrator with reciprocal rank fusion (RRF) for hybrid context.
-"""
-Retrieval Orchestrator - Coordinates query decomposition, retrieval, and answer generation.
 
 Flow:
 1. Decompose query into logical components
@@ -82,6 +80,7 @@ class RetrievalOrchestrator:
         """
         retrieval_start = time.time()
         cache_hit = False
+        decomposition_ms = 0.0
 
         # Step 0: Check cache
         cached_results = self.cache.get(user_id, query, "retrieval_context")

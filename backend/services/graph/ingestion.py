@@ -29,9 +29,48 @@ class GraphIngestion:
             )
             # Test connection
             self.driver.verify_connectivity()
+            self._ensure_indexes_and_constraints()
         except Exception as e:
             print(f"Warning: Could not connect to Neo4j: {e}")
             self.driver = None
+
+    def _ensure_indexes_and_constraints(self):
+        """Create critical constraints/indexes used by ingestion and retrieval hot paths."""
+        if not self.driver:
+            return
+
+        statements = [
+            # Core identity constraints.
+            "CREATE CONSTRAINT user_id_unique IF NOT EXISTS FOR (u:User) REQUIRE u.id IS UNIQUE",
+            "CREATE CONSTRAINT message_id_unique IF NOT EXISTS FOR (m:Message) REQUIRE m.id IS UNIQUE",
+            "CREATE CONSTRAINT fact_id_unique IF NOT EXISTS FOR (f:Fact) REQUIRE f.id IS UNIQUE",
+            "CREATE CONSTRAINT chunk_id_unique IF NOT EXISTS FOR (c:DocumentChunk) REQUIRE c.id IS UNIQUE",
+
+            # Hot lookup indexes by user and entity keys.
+            "CREATE INDEX transaction_user_id_idx IF NOT EXISTS FOR (t:Transaction) ON (t.user_id, t.id)",
+            "CREATE INDEX asset_user_id_idx IF NOT EXISTS FOR (a:Asset) ON (a.user_id, a.id)",
+            "CREATE INDEX goal_user_id_idx IF NOT EXISTS FOR (g:Goal) ON (g.user_id, g.id)",
+            "CREATE INDEX preference_user_id_idx IF NOT EXISTS FOR (p:Preference) ON (p.user_id, p.id)",
+            "CREATE INDEX fact_user_text_idx IF NOT EXISTS FOR (f:Fact) ON (f.user_id, f.text)",
+            "CREATE INDEX fact_user_id_idx IF NOT EXISTS FOR (f:Fact) ON (f.user_id, f.id)",
+            "CREATE INDEX message_user_id_idx IF NOT EXISTS FOR (m:Message) ON (m.user_id, m.id)",
+
+            # Vector + recency query support.
+            "CREATE INDEX chunk_user_timestamp_idx IF NOT EXISTS FOR (c:DocumentChunk) ON (c.user_id, c.timestamp)",
+            "CREATE INDEX chunk_user_id_idx IF NOT EXISTS FOR (c:DocumentChunk) ON (c.user_id, c.id)",
+            "CREATE INDEX asset_user_name_idx IF NOT EXISTS FOR (a:Asset) ON (a.user_id, a.name)",
+            "CREATE INDEX entity_user_name_idx IF NOT EXISTS FOR (e:Entity) ON (e.user_id, e.name)",
+        ]
+
+        try:
+            with self.driver.session() as session:
+                for stmt in statements:
+                    try:
+                        session.run(stmt)
+                    except Exception as create_error:
+                        print(f"Warning: Index/constraint creation skipped: {create_error}")
+        except Exception as e:
+            print(f"Warning: Could not ensure Neo4j indexes/constraints: {e}")
     
     def ingest_memory(
         self, 

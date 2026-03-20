@@ -1,145 +1,161 @@
-"""
-Graph Retrieval Service - Production-grade controlled retrieval with multi-mode ensemble.
+"""High-performance graph retrieval service with adaptive hybrid ranking."""
 
-Architecture:
-- Multi-mode ensemble retrieval (execute all modes, fuse intelligently)
-- Real hop distance calculation
-- Graph analytics integration (PageRank, centrality)
-- Relationship weighting (confidence-based)
-- User-isolated traversal
-- Timeline filtering
-- Advanced hybrid scoring combining multiple signals
-- Deferred reinforcement (updated after answer generation)
-"""
+from __future__ import annotations
 
 from typing import Dict, List, Any, Tuple, Optional
+from datetime import datetime, timezone
 import time
 import math
-from datetime import datetime, timezone
+import heapq
+
 from neo4j import GraphDatabase
 from neo4j.time import DateTime
+
 from config.settings import Settings
 from services.graph.query_understanding import QueryUnderstanding, RetrievalMode
-from services.graph.graph_analytics import GraphAnalytics
 
 
 class GraphRetrieval:
-    """
-    Production-grade graph retrieval with controlled traversal.
+    """Optimized graph retrieval with low-latency mode-aware queries."""
 
-    Design Principles:
-    - Multi-mode ensemble execution with intelligent fusion
-    - Graph analytics for importance scoring
-    - Relationship weighting for semantic relevance
-    - No wildcard path explosion
-    - Real hop distance scoring with centrality weighting
-    - Strict user isolation
-    - O(edges) complexity, not O(paths)
-    """
-    
-    # Enhanced scoring weights (sum = 1.0)
     SCORE_WEIGHTS = {
-        "graph_distance": 0.20,      # Reduced: prefer importance over proximity
-        "centrality": 0.25,           # NEW: Network importance
-        "recency": 0.20,
-        "confidence": 0.15,
-        "reinforcement": 0.10,
-        "relationship_weight": 0.10   # NEW: Edge confidence
+        "relevance": 0.30,
+        "distance": 0.25,
+        "centrality": 0.15,
+        "recency": 0.15,
+        "confidence": 0.10,
+        "reinforcement": 0.05,
     }
 
-    # Recency decay parameter
-    RECENCY_DECAY_LAMBDA = 0.1  # Exponential decay rate
+    RECENCY_DECAY_LAMBDA = 0.08
+    CENTRALITY_CACHE_TTL_SEC = 300
 
-    
     def __init__(self):
-        """Initialize Neo4j connection and analytics."""
         try:
             self.driver = GraphDatabase.driver(
                 Settings.NEO4J_URI,
-                auth=(Settings.NEO4J_USER, Settings.NEO4J_PASSWORD)
+                auth=(Settings.NEO4J_USER, Settings.NEO4J_PASSWORD),
             )
             self.driver.verify_connectivity()
-        except Exception as e:
-            print(f"Warning: Could not connect to Neo4j: {e}")
+        except Exception as error:
+            print(f"Warning: Could not connect to Neo4j: {error}")
             self.driver = None
 
         self.query_understanding = QueryUnderstanding()
+        self._centrality_cache: Dict[str, Tuple[float, Dict[str, float]]] = {}
 
     def retrieve(
         self,
         user_id: str,
         query: str,
-        max_depth: int = 2  # Reduced from 3 for sub-100ms target
+        max_depth: int = 2,
     ) -> Tuple[List[Dict[str, Any]], float]:
-        """
-        Retrieve relevant graph context using controlled mode-based queries.
-
-        Optimizations:
-        - Reduced max_depth from 3 to 2 for faster traversal
-        - Efficient node ranking
-        - Early termination strategies
-
-        Args:
-            user_id: User identifier
-            query: User's query text
-            max_depth: Maximum hops (optimized for speed)
-
-        Returns:
-            Tuple of (retrieved_nodes, retrieval_time_ms)
-        """
+        """Retrieve and rank graph nodes for a question."""
         if not self.driver:
-            print("Warning: Neo4j driver not initialized, returning empty results")
             return [], 0.0
 
-        start_time = time.time()
-        retrieved_nodes = []
-
+        start = time.time()
         try:
             with self.driver.session() as session:
-                # 1. Classify query mode
-                mode, recommended_depth = self.query_understanding.classify_query(
-                    query)
-                # Cap depth at 2 for performance (down from original 3)
-                recommended_depth = min(recommended_depth, 2)
-                print(f"Query mode: {mode.value}, depth: {recommended_depth}")
-
-                # 2. Extract timeline filter (optional)
+                mode, recommended_depth = self.query_understanding.classify_query(query)
+                depth, top_k = self._build_retrieval_plan(mode, query, max_depth, recommended_depth)
                 start_date = self.query_understanding.extract_timeline(query)
 
-                # 3. Execute mode-specific retrieval
-                raw_nodes = self._execute_mode_based_retrieval(
-                    session, user_id, mode, start_date, recommended_depth
-                )
+                use_ensemble = self._should_use_ensemble(mode, query)
+                if use_ensemble:
+                    raw_nodes = self._execute_ensemble_retrieval(
+                        session=session,
+                        user_id=user_id,
+                        primary_mode=mode,
+                        start_date=start_date,
+                        depth=depth,
+                        top_k=top_k,
+                    )
+                else:
+                    raw_nodes = self._execute_mode_based_retrieval(
+                        session=session,
+                        user_id=user_id,
+                        mode=mode,
+                        start_date=start_date,
+                        depth=depth,
+                        top_k=top_k,
+                    )
 
-                # 4. Calculate real hop distances from User node
-                nodes_with_hops = self._calculate_hop_distances(
-                    session, user_id, raw_nodes
-                )
+                centrality = self._get_centrality_scores(session, user_id)
+                ranked = self._score_and_rank_nodes(raw_nodes, query, centrality, top_k)
+                return ranked, (time.time() - start) * 1000
+        except Exception as error:
+            print(f"Error during graph retrieval: {error}")
+            return [], (time.time() - start) * 1000
 
-                # 5. Apply scoring and ranking (simplified for speed)
-                retrieved_nodes = self._score_and_rank_nodes(
-                    nodes_with_hops, query
-                )
+    def _build_retrieval_plan(
+        self,
+        mode: RetrievalMode,
+        query_text: str,
+        requested_depth: int,
+        recommended_depth: int,
+    ) -> Tuple[int, int]:
+        token_count = len((query_text or "").split())
+        depth = max(1, min(3, max(requested_depth, recommended_depth)))
 
-        except Exception as e:
-            print(f"Error during graph retrieval: {e}")
-            import traceback
-            traceback.print_exc()
-
-        retrieval_time_ms = (time.time() - start_time) * 1000
-
-        return retrieved_nodes, retrieval_time_ms
-
-    def _serialize_neo4j_types(self, obj: Any) -> Any:
-        """Convert Neo4j types to JSON-serializable Python types."""
-        if isinstance(obj, DateTime):
-            return obj.isoformat()
-        elif isinstance(obj, dict):
-            return {k: self._serialize_neo4j_types(v) for k, v in obj.items()}
-        elif isinstance(obj, (list, tuple)):
-            return [self._serialize_neo4j_types(item) for item in obj]
+        if mode == RetrievalMode.DIRECT_LOOKUP:
+            top_k = 45
+            depth = min(depth, 2)
+        elif mode == RetrievalMode.AGGREGATION:
+            top_k = 70
+            depth = min(depth, 2)
         else:
-            return obj
+            top_k = 90
+            depth = max(2, depth)
+
+        if token_count >= 16:
+            top_k += 20
+        return depth, min(top_k, 140)
+
+    def _should_use_ensemble(self, mode: RetrievalMode, query: str) -> bool:
+        token_count = len((query or "").split())
+        if mode == RetrievalMode.RELATIONAL_REASONING:
+            return True
+        return token_count >= 12
+
+    def _execute_ensemble_retrieval(
+        self,
+        session,
+        user_id: str,
+        primary_mode: RetrievalMode,
+        start_date: Optional[datetime],
+        depth: int,
+        top_k: int,
+    ) -> List[Dict[str, Any]]:
+        modes = [primary_mode] + [m for m in RetrievalMode if m != primary_mode]
+        mode_budget = {
+            primary_mode: top_k,
+        }
+        for mode in modes:
+            if mode != primary_mode:
+                mode_budget[mode] = max(20, int(top_k * 0.55))
+
+        merged: Dict[str, Dict[str, Any]] = {}
+        for mode in modes:
+            nodes = self._execute_mode_based_retrieval(
+                session=session,
+                user_id=user_id,
+                mode=mode,
+                start_date=start_date,
+                depth=depth,
+                top_k=mode_budget[mode],
+            )
+            for node in nodes:
+                node_id = node.get("properties", {}).get("id")
+                if not node_id:
+                    continue
+                if node_id not in merged:
+                    node["mode_coverage"] = 1
+                    merged[node_id] = node
+                else:
+                    merged[node_id]["mode_coverage"] = merged[node_id].get("mode_coverage", 1) + 1
+
+        return list(merged.values())
 
     def _execute_mode_based_retrieval(
         self,
@@ -148,23 +164,16 @@ class GraphRetrieval:
         mode: RetrievalMode,
         start_date: Optional[datetime],
         depth: int,
-        top_k: int
+        top_k: int,
     ) -> List[Dict[str, Any]]:
-        """
-        Execute controlled retrieval based on query mode.
-
-        NO WILDCARD PATHS - Each mode has specific traversal.
-        """
-        # Build timeline filter clause
-        timeline_filter = ""
-        params = {"user_id": user_id}
-
-        if start_date:
-            timeline_filter = "AND n.timestamp >= $start_date"
-            params["start_date"] = start_date
+        params = {
+            "user_id": user_id,
+            "top_k": top_k,
+            "start_date": start_date,
+        }
+        node_time_filter = "AND ($start_date IS NULL OR coalesce(n.timestamp, n.last_reinforced, n.created_at) >= $start_date)"
 
         if mode == RetrievalMode.DIRECT_LOOKUP:
-            # Simple entity lookup (e.g., "What assets do I own?")
             query = f"""
             MATCH (u:User {{id: $user_id}})
             OPTIONAL MATCH (u)-[:OWNS_MESSAGE]->(m:Message)
@@ -175,62 +184,67 @@ class GraphRetrieval:
             WHERE a.user_id = $user_id
             OPTIONAL MATCH (m)-[:DERIVED_FACT]->(f:Fact)
             WHERE f.user_id = $user_id
-            WITH u, collect(DISTINCT m) + collect(DISTINCT t) + collect(DISTINCT a) + collect(DISTINCT f) as nodes
+            WITH collect(DISTINCT m) + collect(DISTINCT t) + collect(DISTINCT a) + collect(DISTINCT f) as nodes
             UNWIND nodes as n
-            WITH u, n
             WHERE n IS NOT NULL {node_time_filter}
-            OPTIONAL MATCH path = shortestPath((u)-[*1..{depth}]-(n))
-            WITH n, coalesce(length(path), {depth} + 1) AS hops
-            WITH n, hops,
-                 CASE
-                     WHEN n:Fact THEN 'fact_memory'
-                     WHEN n:Transaction THEN 'transaction_link'
-                     WHEN n:Asset THEN 'asset_link'
-                     WHEN n:Message THEN 'message_context'
-                     ELSE 'direct_lookup'
-                 END AS matched_by
+            WITH n,
+                CASE
+                    WHEN n:Message THEN 1
+                    WHEN n:Transaction THEN 1
+                    WHEN n:Asset THEN 2
+                    WHEN n:Fact THEN 2
+                    ELSE {depth} + 1
+                END AS hops,
+                CASE
+                    WHEN n:Fact THEN 'fact_memory'
+                    WHEN n:Transaction THEN 'transaction_link'
+                    WHEN n:Asset THEN 'asset_link'
+                    WHEN n:Message THEN 'message_context'
+                    ELSE 'direct_lookup'
+                END AS matched_by
             RETURN DISTINCT n, hops, matched_by
             ORDER BY hops ASC
             LIMIT $top_k
             """
-
         elif mode == RetrievalMode.AGGREGATION:
-            # Aggregation queries (e.g., "How much have I invested?")
             query = f"""
             MATCH (u:User {{id: $user_id}})
             MATCH (u)-[:MADE_TRANSACTION]->(t:Transaction)
-                        WHERE t.user_id = $user_id AND coalesce(t.superseded, false) = false
-                            AND ($start_date IS NULL OR coalesce(t.timestamp, t.last_reinforced, t.created_at) >= $start_date)
+            WHERE t.user_id = $user_id
+              AND coalesce(t.superseded, false) = false
+              AND ($start_date IS NULL OR coalesce(t.timestamp, t.last_reinforced, t.created_at) >= $start_date)
             OPTIONAL MATCH (t)-[:AFFECTS_ASSET]->(a:Asset)
             WHERE a.user_id = $user_id
             OPTIONAL MATCH (f:Fact)-[:CONFIRMS]->(t)
             WHERE f.user_id = $user_id
-            WITH u, collect(DISTINCT t) + collect(DISTINCT a) + collect(DISTINCT f) as nodes
+            WITH collect(DISTINCT t) + collect(DISTINCT a) + collect(DISTINCT f) as nodes
             UNWIND nodes as n
-                        WITH u, n
-                        WHERE n IS NOT NULL {node_time_filter}
-                        OPTIONAL MATCH path = shortestPath((u)-[*1..{depth}]-(n))
-                        WITH n, coalesce(length(path), {depth} + 1) AS hops
-                        WITH n, hops,
-                                 CASE
-                                         WHEN n:Transaction THEN 'aggregation_transaction'
-                                         WHEN n:Fact THEN 'aggregation_fact'
-                                         WHEN n:Asset THEN 'aggregation_asset'
-                                         ELSE 'aggregation_context'
-                                 END AS matched_by
-                        RETURN DISTINCT n, hops, matched_by
-                        ORDER BY hops ASC
-                        LIMIT $top_k
+            WHERE n IS NOT NULL {node_time_filter}
+            WITH n,
+                CASE
+                    WHEN n:Transaction THEN 1
+                    WHEN n:Asset THEN 2
+                    WHEN n:Fact THEN 2
+                    ELSE {depth} + 1
+                END AS hops,
+                CASE
+                    WHEN n:Transaction THEN 'aggregation_transaction'
+                    WHEN n:Fact THEN 'aggregation_fact'
+                    WHEN n:Asset THEN 'aggregation_asset'
+                    ELSE 'aggregation_context'
+                END AS matched_by
+            RETURN DISTINCT n, hops, matched_by
+            ORDER BY hops ASC
+            LIMIT $top_k
             """
-
-        elif mode == RetrievalMode.RELATIONAL_REASONING:
-            # Multi-hop reasoning (e.g., "Is investment aligned with goal?")
+        else:
             query = f"""
             MATCH (u:User {{id: $user_id}})
             OPTIONAL MATCH (u)-[:MADE_TRANSACTION]->(t:Transaction)-[:AFFECTS_ASSET]->(a:Asset)
-                        WHERE t.user_id = $user_id AND a.user_id = $user_id
-                            AND coalesce(t.superseded, false) = false
-                            AND ($start_date IS NULL OR coalesce(t.timestamp, t.last_reinforced, t.created_at) >= $start_date)
+            WHERE t.user_id = $user_id
+              AND a.user_id = $user_id
+              AND coalesce(t.superseded, false) = false
+              AND ($start_date IS NULL OR coalesce(t.timestamp, t.last_reinforced, t.created_at) >= $start_date)
             OPTIONAL MATCH (a)-[:CONTRIBUTES_TO]->(g:Goal)
             WHERE g.user_id = $user_id
             OPTIONAL MATCH (u)-[:HAS_PREFERENCE]->(p:Preference)
@@ -239,47 +253,38 @@ class GraphRetrieval:
             WHERE f.user_id = $user_id
             OPTIONAL MATCH (f2:Fact)-[:RELATES_TO]->(a)
             WHERE f2.user_id = $user_id
-              WITH u, collect(DISTINCT t) + collect(DISTINCT a) + collect(DISTINCT g) + 
-                 collect(DISTINCT p) + collect(DISTINCT f) + collect(DISTINCT f2) as nodes
+            WITH collect(DISTINCT t) + collect(DISTINCT a) + collect(DISTINCT g) + collect(DISTINCT p) + collect(DISTINCT f) + collect(DISTINCT f2) as nodes
             UNWIND nodes as n
-              WITH u, n
-              WHERE n IS NOT NULL {node_time_filter}
-              OPTIONAL MATCH path = shortestPath((u)-[*1..{depth}]-(n))
-              WITH n, coalesce(length(path), {depth} + 1) AS hops
-              WITH n, hops,
-                  CASE
-                     WHEN n:Goal THEN 'goal_reasoning'
-                     WHEN n:Preference THEN 'preference_reasoning'
-                     WHEN n:Asset THEN 'asset_reasoning'
-                     WHEN n:Fact THEN 'fact_reasoning'
-                     ELSE 'relational_context'
-                  END AS matched_by
-              RETURN DISTINCT n, hops, matched_by
-              ORDER BY hops ASC
-              LIMIT $top_k
-            """
-
-        else:
-            # Fallback to direct lookup
-            query = f"""
-            MATCH (u:User {{id: $user_id}})
-            MATCH (u)-[:MADE_TRANSACTION]->(t:Transaction)
-            WHERE t.user_id = $user_id AND coalesce(t.superseded, false) = false
-            OPTIONAL MATCH path = shortestPath((u)-[*1..{depth}]-(t))
-            WITH t AS n, coalesce(length(path), {depth} + 1) AS hops
-            RETURN n, hops, 'fallback_transaction' AS matched_by
+            WHERE n IS NOT NULL {node_time_filter}
+            WITH n,
+                CASE
+                    WHEN n:Preference THEN 1
+                    WHEN n:Transaction THEN 1
+                    WHEN n:Asset THEN 2
+                    WHEN n:Fact THEN 2
+                    WHEN n:Goal THEN 3
+                    ELSE {depth} + 1
+                END AS hops,
+                CASE
+                    WHEN n:Goal THEN 'goal_reasoning'
+                    WHEN n:Preference THEN 'preference_reasoning'
+                    WHEN n:Asset THEN 'asset_reasoning'
+                    WHEN n:Fact THEN 'fact_reasoning'
+                    ELSE 'relational_context'
+                END AS matched_by
+            RETURN DISTINCT n, hops, matched_by
             ORDER BY hops ASC
             LIMIT $top_k
             """
 
         result = session.run(query, **params)
-
-        # Format nodes
-        nodes = []
+        nodes: List[Dict[str, Any]] = []
         for record in result:
             node = record.get("n")
-            if node:
-                nodes.append({
+            if not node:
+                continue
+            nodes.append(
+                {
                     "type": list(node.labels)[0] if node.labels else "Unknown",
                     "properties": self._serialize_neo4j_types(dict(node)),
                     "neo4j_id": node.id,
@@ -289,378 +294,190 @@ class GraphRetrieval:
                         "matched_by": record.get("matched_by", "unknown"),
                         "depth_used": depth,
                         "top_k_used": top_k,
-                        "timeline_filter_applied": start_date is not None
-                    }
-                })
-
-        print(f"[DEBUG] Mode: {mode.value}, Retrieved {len(nodes)} nodes")
+                        "timeline_filter_applied": start_date is not None,
+                    },
+                }
+            )
         return nodes
 
-    def _calculate_hop_distances(
-        self,
-        session,
-        user_id: str,
-        nodes: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
-        """
-        Calculate real hop distance from User node to each retrieved node.
+    def _get_centrality_scores(self, session, user_id: str) -> Dict[str, float]:
+        now = time.time()
+        cached = self._centrality_cache.get(user_id)
+        if cached and (now - cached[0] < self.CENTRALITY_CACHE_TTL_SEC):
+            return cached[1]
 
-        Uses shortestPath() for accurate graph distance.
-        """
-        nodes_with_hops = []
-
-        for node in nodes:
-            node_id = node["properties"].get("id")
-            if not node_id:
-                continue
-
-            # Calculate shortest path length
-            hop_query = """
-            MATCH (u:User {id: $user_id})
-            MATCH (n {id: $node_id, user_id: $user_id})
-            MATCH path = shortestPath((u)-[*1..5]-(n))
-            RETURN length(path) as hops
-            """
-
-            try:
-                result = session.run(
-                    hop_query, user_id=user_id, node_id=node_id)
-                record = result.single()
-                # Default to 3 if no path
-                hops = record["hops"] if record else 3
-            except:
-                hops = 3  # Fallback
-
-            node["hop_distance"] = hops
-            nodes_with_hops.append(node)
-
-        print(
-            f"[DEBUG] Calculated hops for {len(nodes_with_hops)}/{len(nodes)} nodes")
-        return nodes_with_hops
+        try:
+            result = session.run(
+                """
+                MATCH (n {user_id: $user_id})
+                WHERE n.id IS NOT NULL
+                OPTIONAL MATCH (n)--(m {user_id: $user_id})
+                WITH n, count(m) as degree
+                RETURN n.id as node_id,
+                    CASE
+                        WHEN degree <= 0 THEN 0.0
+                        ELSE min(1.0, log(1 + toFloat(degree)) / log(50.0))
+                    END as centrality
+                """,
+                user_id=user_id,
+            )
+            scores = {r.get("node_id"): float(r.get("centrality", 0.0)) for r in result if r.get("node_id")}
+            self._centrality_cache[user_id] = (now, scores)
+            return scores
+        except Exception:
+            return {}
 
     def _score_and_rank_nodes(
         self,
         nodes: List[Dict[str, Any]],
-        query: str
+        query: str,
+        centrality_scores: Dict[str, float],
+        top_k: int,
     ) -> List[Dict[str, Any]]:
-        """
-        Score and rank nodes using normalized multi-factor scoring with query relevance.
-
-        Formula (all components normalized 0-1):
-        score = w_relevance × relevance_score +
-                w_graph × graph_score + 
-                w_recency × recency_score + 
-                w_confidence × confidence +
-                w_reinforcement × reinforcement_score
-
-        Where:
-        - relevance_score = keyword match similarity to query
-        - graph_score = 1 / (hops + 1)
-        - recency_score = exp(-λ × days_ago)
-        - confidence = node.confidence
-        - reinforcement_score = min(1, log(1 + count) / log(10))
-        - relationship_weight = confidence of incoming relationships
-        """
-        scored_nodes = []
         now = datetime.now(timezone.utc)
+        keywords = self.query_understanding.extract_query_keywords(query)
 
-        # Extract query keywords for relevance matching
-        query_keywords = self.query_understanding.extract_query_keywords(query)
-        query_keywords_lower = [kw.lower() for kw in query_keywords]
-
+        scored: List[Dict[str, Any]] = []
         for node in nodes:
             props = node.get("properties", {})
             node_type = node.get("type", "Unknown")
-
-            # Skip User nodes from ranking
             if node_type == "User":
                 continue
 
-            # Calculate relevance score based on keyword matching
-            relevance_score = self._calculate_relevance_score(
-                node, query_keywords_lower, query.lower())
-            # Extract query keywords for relevance matching
-            query_keywords = self.query_understanding.extract_query_keywords(
-                query)
-            query_keywords_lower = [kw.lower() for kw in query_keywords]
+            hops = int(node.get("hop_distance", 3))
+            distance_score = 1.0 / (hops + 1)
+            relevance_score = self._calculate_relevance_score(node, keywords, query.lower())
 
-            # Calculate relevance score based on keyword matching
-            relevance_score = self._calculate_relevance_score(
-                node, query_keywords_lower, query.lower()
-            )
+            node_id = props.get("id")
+            centrality_score = centrality_scores.get(node_id, 0.05)
 
-            # 1. Graph Distance Score (inverse of hops)
-            hops = node.get("hop_distance", 3)
-            graph_score = 1.0 / (hops + 1)
-
-            # 2. Recency Score (exponential decay)
-            recency_score = 0.5  # Default
-            last_reinforced = props.get("last_reinforced")
+            recency_score = 0.45
             days_ago = 0.0
-            if last_reinforced:
-                if isinstance(last_reinforced, str):
-                    try:
-                        last_dt = datetime.fromisoformat(
-                            last_reinforced.replace("Z", "+00:00"))
-                        days_ago = (now - last_dt).total_seconds() / \
-                            86400  # Days as float
-                        recency_score = math.exp(
-                            -self.RECENCY_DECAY_LAMBDA * days_ago)
-                    except:
-                        pass
+            reference_ts = props.get("last_reinforced") or props.get("timestamp") or props.get("created_at")
+            if isinstance(reference_ts, str):
+                try:
+                    ts = datetime.fromisoformat(reference_ts.replace("Z", "+00:00"))
+                    days_ago = max(0.0, (now - ts).total_seconds() / 86400)
+                    recency_score = math.exp(-self.RECENCY_DECAY_LAMBDA * days_ago)
+                except Exception:
+                    pass
 
-            # 3. Confidence Score (already normalized 0-1)
             confidence = float(props.get("confidence", 0.5))
-
-            # 4. Reinforcement Score (logarithmic scaling)
             reinforcement_count = int(props.get("reinforcement_count", 0))
-            if reinforcement_count > 0:
-                reinforcement_score = min(1.0, math.log(
-                    1 + reinforcement_count) / math.log(10))
-            else:
-                reinforcement_score = 0.0
+            reinforcement_score = min(1.0, math.log(1 + reinforcement_count) / math.log(10)) if reinforcement_count > 0 else 0.0
 
-            # Calculate weighted final score with relevance boosting
-            final_score = (
-                0.3 * relevance_score +  # NEW: Query relevance has high priority
-                self.SCORE_WEIGHTS["graph_distance"] * graph_score +
-                self.SCORE_WEIGHTS["recency"] * recency_score +
-                self.SCORE_WEIGHTS["confidence"] * confidence +
-                self.SCORE_WEIGHTS["reinforcement"] * reinforcement_score +
-                self.SCORE_WEIGHTS["relationship_weight"] * relationship_weight
+            mode_coverage = float(node.get("mode_coverage", 1))
+            mode_boost = min(1.0, mode_coverage / 3.0)
+
+            score = (
+                self.SCORE_WEIGHTS["relevance"] * relevance_score
+                + self.SCORE_WEIGHTS["distance"] * distance_score
+                + self.SCORE_WEIGHTS["centrality"] * centrality_score
+                + self.SCORE_WEIGHTS["recency"] * recency_score
+                + self.SCORE_WEIGHTS["confidence"] * confidence
+                + self.SCORE_WEIGHTS["reinforcement"] * reinforcement_score
             )
+            score *= 1.0 + 0.15 * mode_boost
+            score = min(1.0, score)
 
-            # Add scoring details to node
-            node["retrieval_score"] = round(final_score, 3)
+            node["retrieval_score"] = round(score, 4)
             node["score_breakdown"] = {
-                "relevance": round(relevance_score, 3),
-                "graph_distance": round(graph_score, 3),
-                "recency": round(recency_score, 3),
-                "confidence": round(confidence, 3),
-                "reinforcement": round(reinforcement_score, 3),
-                "days_since_reinforced": round(days_ago, 3),
+                "relevance": round(relevance_score, 4),
+                "distance": round(distance_score, 4),
+                "centrality": round(centrality_score, 4),
+                "recency": round(recency_score, 4),
+                "confidence": round(confidence, 4),
+                "reinforcement": round(reinforcement_score, 4),
+                "mode_coverage": int(mode_coverage),
+                "days_since_reference": round(days_ago, 3),
                 "hop_distance": hops,
-                "relationship": round(relationship_weight, 3),
-                "mode_coverage": mode_coverage,
-                "hop_distance": hops,
-                "trace": node.get("retrieval_trace", {})
+                "trace": node.get("retrieval_trace", {}),
             }
-
-            # Add snippet for explainability
             node["snippet"] = self._create_snippet(node_type, props)
 
-            scored_nodes.append(node)
+            if score >= 0.08:
+                scored.append(node)
 
-        # Filter out low-relevance nodes (< 0.1 score) to reduce noise
-        scored_nodes = [n for n in scored_nodes if n.get(
-            "retrieval_score", 0) >= 0.1]
-
-        # Sort by score descending
-        scored_nodes.sort(key=lambda x: x.get(
-            "retrieval_score", 0), reverse=True)
-
-        print(
-            f"[DEBUG] Scored and ranked {len(scored_nodes)} nodes (top score: {scored_nodes[0]['retrieval_score'] if scored_nodes else 'N/A'})")
-        return scored_nodes
-
-    def _create_snippet(self, node_type: str, props: Dict[str, Any]) -> str:
-        """Create human-readable snippet for node."""
-        if node_type == "Transaction":
-            amount = props.get("amount", 0)
-            tx_type = props.get("transaction_type", "transaction")
-            return f"{tx_type.capitalize()} of ₹{amount:,.0f}"
-
-        elif node_type == "Asset":
-            name = props.get("name", "Unknown")
-            asset_type = props.get("asset_type", "asset")
-            return f"{name} ({asset_type})"
-
-        elif node_type == "Fact":
-            text = props.get("text", "")
-            return text[:60] + "..." if len(text) > 60 else text
-
-        elif node_type == "Goal":
-            name = props.get("name", "Unknown goal")
-            return f"Goal: {name}"
-
-        elif node_type == "Message":
-            text = props.get("text", "")
-            return text[:50] + "..." if len(text) > 50 else text
-
-        else:
-            return props.get("name", props.get("text", node_type))
-
-    def reinforce_cited_nodes(self, user_id: str, node_ids: List[str]):
-        """
-        Update reinforcement for nodes cited in LLM answer.
-
-        Called AFTER answer generation (deferred reinforcement).
-
-        Args:
-            user_id: User identifier
-            node_ids: List of node IDs that were cited in answer
-        """
-        if not self.driver or not node_ids:
-            return
-
-        try:
-            with self.driver.session() as session:
-                query = """
-                UNWIND $node_ids as node_id
-                MATCH (n {id: node_id, user_id: $user_id})
-                SET n.last_reinforced = datetime(),
-                    n.reinforcement_count = coalesce(n.reinforcement_count, 0) + 1
-                RETURN count(n) as updated_count
-                """
-
-                result = session.run(query, user_id=user_id, node_ids=node_ids)
-                record = result.single()
-                count = record["updated_count"] if record else 0
-                print(f"Reinforced {count} cited nodes")
-
-        except Exception as e:
-            print(f"Error reinforcing nodes: {e}")
-
-    def detect_contradictions(self, user_id: str, new_fact_text: str, entity_name: str) -> List[Dict[str, Any]]:
-        """
-        Detect contradictions with existing facts about the same entity.
-
-        Args:
-            user_id: User identifier
-            new_fact_text: The new fact text to check
-            entity_name: The entity this fact relates to
-
-        Returns:
-            List of potentially contradicting facts
-        """
-        if not self.driver:
-            return []
-
-        try:
-            with self.driver.session() as session:
-                # Find existing facts about the same entity with strict user isolation
-                query = """
-                MATCH (f:Fact {user_id: $user_id})
-                MATCH (f)-[:RELATES_TO]->(e {name: $entity_name, user_id: $user_id})
-                WHERE f.text <> $new_fact_text
-                RETURN f.id as fact_id, f.text as fact_text, f.confidence as confidence
-                ORDER BY f.timestamp DESC
-                LIMIT 5
-                """
-
-                result = session.run(
-                    query,
-                    user_id=user_id,
-                    new_fact_text=new_fact_text,
-                    entity_name=entity_name
-                )
-
-                contradictions = []
-                for record in result:
-                    contradictions.append({
-                        "fact_id": record["fact_id"],
-                        "fact_text": record["fact_text"],
-                        "confidence": record["confidence"]
-                    })
-
-                return contradictions
-
-        except Exception as e:
-            print(f"Error in contradiction detection: {e}")
-            return []
-
-    def mark_contradiction(self, old_fact_id: str, new_fact_id: str, user_id: str, reduce_confidence: bool = True):
-        """
-        Mark two facts as contradicting and optionally reduce confidence of old fact.
-
-        Args:
-            old_fact_id: ID of the older fact
-            new_fact_id: ID of the newer fact
-            user_id: User identifier for isolation
-            reduce_confidence: Whether to reduce confidence of old fact
-        """
-        if not self.driver:
-            return
-
-        try:
-            with self.driver.session() as session:
-                query = """
-                MATCH (old:Fact {id: $old_fact_id, user_id: $user_id})
-                MATCH (new:Fact {id: $new_fact_id, user_id: $user_id})
-                MERGE (old)-[:CONTRADICTS]->(new)
-                """
-
-                if reduce_confidence:
-                    query += """
-                    SET old.confidence = old.confidence * 0.5
-                    """
-
-                session.run(query, old_fact_id=old_fact_id,
-                            new_fact_id=new_fact_id, user_id=user_id)
-                print(
-                    f"Marked contradiction between {old_fact_id} and {new_fact_id}")
-
-        except Exception as e:
-            print(f"Error marking contradiction: {e}")
+        return heapq.nlargest(top_k, scored, key=lambda x: x.get("retrieval_score", 0.0))
 
     def _calculate_relevance_score(
         self,
         node: Dict[str, Any],
         query_keywords: List[str],
-        query_lower: str
+        query_lower: str,
     ) -> float:
-        """
-        Calculate query relevance score for a node (0-1).
-
-        Matches keywords against node properties to filter for query-relevant evidence.
-        Higher score = more relevant to the query.
-        """
         if not query_keywords:
-            return 0.5  # Default to neutral if no keywords
+            return 0.5
 
         props = node.get("properties", {})
-        node_type = node.get("type", "Unknown")
+        fields = []
+        for key in ["name", "text", "transaction_type", "asset_type", "description"]:
+            value = props.get(key)
+            if isinstance(value, str) and value:
+                fields.append(value.lower())
 
-        # Collect all text fields from the node with importance weights
-        text_fields = []
+        if not fields:
+            return 0.2
 
+        matched = 0
+        for keyword in query_keywords:
+            if any(keyword in field for field in fields):
+                matched += 1
+
+        exact_phrase_boost = 0.1 if any(query_lower[:24] in field for field in fields if len(query_lower) >= 8) else 0.0
+        return min(1.0, matched / max(1, len(query_keywords)) + exact_phrase_boost)
+
+    def _create_snippet(self, node_type: str, props: Dict[str, Any]) -> str:
         if node_type == "Transaction":
-            # Check transaction type and description
-            text_fields.append((props.get("transaction_type", ""), 2.0))
-            text_fields.append((props.get("description", ""), 1.0))
-        elif node_type == "Asset":
-            # Check asset name and type (name is most important)
-            text_fields.append((props.get("name", ""), 3.0))
-            text_fields.append((props.get("asset_type", ""), 2.0))
-        elif node_type == "Fact":
-            # Check fact text content
-            text_fields.append((props.get("text", ""), 2.0))
-        elif node_type == "Goal":
-            # Check goal name
-            text_fields.append((props.get("name", ""), 2.0))
-        elif node_type == "Message":
-            # Check message content
-            text_fields.append((props.get("text", ""), 1.5))
+            amount = props.get("amount", 0)
+            tx_type = props.get("transaction_type", "transaction")
+            try:
+                return f"{tx_type.capitalize()} of Rs {float(amount):,.0f}"
+            except Exception:
+                return f"{tx_type.capitalize()} transaction"
+        if node_type == "Asset":
+            return f"{props.get('name', 'Unknown')} ({props.get('asset_type', 'asset')})"
+        if node_type == "Fact":
+            text = props.get("text", "")
+            return text[:70] + "..." if len(text) > 70 else text
+        if node_type == "Goal":
+            return f"Goal: {props.get('name', 'Unknown goal')}"
+        if node_type == "Message":
+            text = props.get("text", "")
+            return text[:60] + "..." if len(text) > 60 else text
+        return props.get("name", props.get("text", node_type))
 
-        # Calculate keyword match score with weights
-        matches = 0.0
-        max_possible = float(len(query_keywords))
+    def _serialize_neo4j_types(self, obj: Any) -> Any:
+        if isinstance(obj, DateTime):
+            return obj.isoformat()
+        if isinstance(obj, dict):
+            return {k: self._serialize_neo4j_types(v) for k, v in obj.items()}
+        if isinstance(obj, (list, tuple)):
+            return [self._serialize_neo4j_types(x) for x in obj]
+        return obj
 
-        for text, weight in text_fields:
-            if not text:
-                continue
-            text_lower = str(text).lower()
-            for kw in query_keywords:
-                if kw in text_lower:
-                    matches += weight
-                    break  # Count each keyword once per field
-
-        # Normalize to 0-1 range
-        relevance_score = min(1.0, matches / max(1.0, max_possible))
-
-        return relevance_score
+    def reinforce_cited_nodes(self, user_id: str, node_ids: List[str]):
+        if not self.driver or not node_ids:
+            return
+        try:
+            with self.driver.session() as session:
+                result = session.run(
+                    """
+                    UNWIND $node_ids as node_id
+                    MATCH (n {id: node_id, user_id: $user_id})
+                    SET n.last_reinforced = datetime(),
+                        n.reinforcement_count = coalesce(n.reinforcement_count, 0) + 1
+                    RETURN count(n) as updated_count
+                    """,
+                    user_id=user_id,
+                    node_ids=node_ids,
+                )
+                record = result.single()
+                count = record["updated_count"] if record else 0
+                print(f"Reinforced {count} cited nodes")
+        except Exception as error:
+            print(f"Error reinforcing nodes: {error}")
 
     def close(self):
-        """Close Neo4j connection."""
         if self.driver:
             self.driver.close()

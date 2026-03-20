@@ -6,8 +6,19 @@ from typing import Any, Dict, List, Optional, Tuple
 from datetime import datetime
 import uuid
 import json
+import os
 
-from pymilvus import Collection, connections, utility, FieldSchema, CollectionSchema, DataType
+try:
+    from pymilvus import Collection, connections, utility, FieldSchema, CollectionSchema, DataType
+    _MILVUS_AVAILABLE = True
+except ModuleNotFoundError:
+    Collection = Any  # type: ignore
+    connections = None  # type: ignore
+    utility = None  # type: ignore
+    FieldSchema = None  # type: ignore
+    CollectionSchema = None  # type: ignore
+    DataType = None  # type: ignore
+    _MILVUS_AVAILABLE = False
 from config.settings import Settings
 from services.vector.embeddings import EmbeddingService
 
@@ -21,6 +32,12 @@ class MilvusService:
         self.collection_name = Settings.MILVUS_COLLECTION
         self.embedding_dim = Settings.EMBEDDING_DIMENSION
         self.collection: Optional[Collection] = None
+        self.index_type = os.getenv("MILVUS_INDEX_TYPE", "HNSW").upper()
+        self.metric_type = os.getenv("MILVUS_METRIC_TYPE", "IP").upper()
+
+        if not _MILVUS_AVAILABLE:
+            print("Warning: pymilvus not installed; Milvus features are disabled.")
+            return
 
         try:
             # Connect to Milvus
@@ -70,11 +87,21 @@ class MilvusService:
                 self.collection = Collection(self.collection_name, schema)
 
                 # Create index for vector field
-                index_params = {
-                    "index_type": "IVF_FLAT",
-                    "metric_type": "L2",
-                    "params": {"nlist": 128}
-                }
+                if self.index_type == "HNSW":
+                    index_params = {
+                        "index_type": "HNSW",
+                        "metric_type": self.metric_type,
+                        "params": {
+                            "M": int(os.getenv("MILVUS_HNSW_M", "16")),
+                            "efConstruction": int(os.getenv("MILVUS_HNSW_EF_CONSTRUCTION", "200"))
+                        }
+                    }
+                else:
+                    index_params = {
+                        "index_type": "IVF_FLAT",
+                        "metric_type": self.metric_type,
+                        "params": {"nlist": int(os.getenv("MILVUS_IVF_NLIST", "256"))}
+                    }
                 self.collection.create_index("embedding", index_params)
                 self.collection.load()
         except Exception as error:
@@ -228,12 +255,17 @@ class MilvusService:
             # Embed query
             query_vector = self.embedding_service.embed_text(query_text)
 
-            # Optimized search parameters for speed
-            # nprobe: number of clusters to search (lower = faster but less accurate)
-            search_params = {
-                "metric_type": "L2",
-                "params": {"nprobe": 8}  # Reduced from 10 for speed
-            }
+            # Index-aware search params for speed/recall tradeoff.
+            if self.index_type == "HNSW":
+                search_params = {
+                    "metric_type": self.metric_type,
+                    "params": {"ef": int(os.getenv("MILVUS_HNSW_EF", "64"))}
+                }
+            else:
+                search_params = {
+                    "metric_type": self.metric_type,
+                    "params": {"nprobe": int(os.getenv("MILVUS_IVF_NPROBE", "8"))}
+                }
             results = self.collection.search(
                 data=[query_vector],
                 anns_field="embedding",
@@ -248,8 +280,11 @@ class MilvusService:
             for hits in results:
                 for hit in hits:
                     distance = hit.distance
-                    # For L2 distance, lower is better; convert to similarity (higher is better)
-                    similarity = 1.0 / (1.0 + distance)
+                    # For IP/COSINE-style metrics in Milvus, larger is better.
+                    if self.metric_type in {"IP", "COSINE"}:
+                        similarity = float(distance)
+                    else:
+                        similarity = 1.0 / (1.0 + float(distance))
 
                     if similarity >= threshold:
                         entity = hit.entity
@@ -370,7 +405,8 @@ class MilvusService:
         try:
             if self.collection:
                 self.collection.flush()
-            connections.disconnect(alias="default")
+            if _MILVUS_AVAILABLE and connections is not None:
+                connections.disconnect(alias="default")
         except Exception as error:
             print(f"Error closing Milvus connection: {error}")
 
