@@ -70,6 +70,11 @@ export const memoryAPI = {
     const response = await api.get('/memory/mindmap');
     return response.data;
   },
+
+  clearGraph: async () => {
+    const response = await api.delete('/memory/clear');
+    return response.data;
+  },
 };
 
 // Document API
