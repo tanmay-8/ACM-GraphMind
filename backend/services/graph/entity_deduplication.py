@@ -79,6 +79,10 @@ class EntityDeduplication:
         if not self.driver:
             return None
         
+        # Validate input
+        if not entity_name or not entity_type:
+            return None
+        
         try:
             with self.driver.session() as session:
                 # 1. Try exact match first (fastest)
@@ -180,26 +184,30 @@ class EntityDeduplication:
         entity_type: str,
         entity_name: str
     ) -> Optional[Dict[str, Any]]:
-        """Find exact match by type and name."""
-        query = """
-        MATCH (n {user_id: $user_id, type: $entity_type})
-        WHERE toLower(n.name) = toLower($entity_name) OR toLower(n.text) = toLower($entity_name)
+        """Find exact match by type and name. OPTIMIZED: Use labels not properties."""
+        # OPTIMIZED: Use label-based matching (much faster than property matching)
+        query = f"""
+        MATCH (n:{entity_type} {{user_id: $user_id}})
+        WHERE toLower(coalesce(n.name, n.text, "")) = toLower($entity_name)
         RETURN n.id as entity_id, 
                n.name as entity_name, 
                properties(n) as properties
         LIMIT 1
         """
         
-        result = session.run(
-            query,
-            user_id=user_id,
-            entity_type=entity_type,
-            entity_name=entity_name
-        )
+        try:
+            result = session.run(
+                query,
+                user_id=user_id,
+                entity_name=entity_name
+            )
+            
+            record = result.single()
+            if record:
+                return dict(record)
+        except Exception as e:
+            print(f"[EntityDedup] Exact match query error: {e}")
         
-        record = result.single()
-        if record:
-            return dict(record)
         return None
     
     def _find_similar_entities(
@@ -211,44 +219,59 @@ class EntityDeduplication:
         similarity_threshold: float = 0.70
     ) -> List[Dict[str, Any]]:
         """
-        Find entities with similar names using string similarity.
+        Find entities with similar names using Python string similarity.
+        NO APOC REQUIRED - uses difflib for similarity calculation.
         
         Returns list sorted by similarity score (descending).
         """
-        query = """
-        MATCH (n {user_id: $user_id, type: $entity_type})
-        WITH n,
-             apoc.text.similarity(toLower(n.name), toLower($entity_name)) as score
-        WHERE score >= $threshold
+        # Handle None entity_name
+        if not entity_name:
+            return []
+        
+        # Step 1: Fetch all entities of this type (using labels)
+        query = f"""
+        MATCH (n:{entity_type} {{user_id: $user_id}})
         RETURN n.id as entity_id,
                n.name as entity_name,
-               properties(n) as properties,
-               score
-        ORDER BY score DESC
-        LIMIT 10
+               coalesce(n.text, "") as entity_text,
+               properties(n) as properties
+        LIMIT 50
         """
         
         try:
-            result = session.run(
-                query,
-                user_id=user_id,
-                entity_type=entity_type,
-                entity_name=entity_name,
-                threshold=similarity_threshold
-            )
-            
-            matches = [dict(record) for record in result]
-            return matches
+            result = session.run(query, user_id=user_id)
+            all_entities = [dict(record) for record in result]
         except Exception as e:
-            print(f"[Dedup] String similarity error (using fallback): {e}")
-            # Fallback: Manual string comparison
-            return self._fallback_string_similarity(
-                session,
-                user_id,
-                entity_type,
-                entity_name,
-                similarity_threshold
-            )
+            print(f"[EntityDedup] Error fetching entities: {e}")
+            return []
+        
+        if not all_entities:
+            return []
+        
+        # Step 2: Calculate similarity in Python using difflib
+        candidates = []
+        entity_name_lower = entity_name.lower()
+        
+        for entity in all_entities:
+            stored_name = entity.get("entity_name", "").lower()
+            stored_text = entity.get("entity_text", "").lower()
+            
+            # Compare against best match (name or text)
+            score1 = SequenceMatcher(None, entity_name_lower, stored_name).ratio()
+            score2 = SequenceMatcher(None, entity_name_lower, stored_text).ratio()
+            best_score = max(score1, score2)
+            
+            if best_score >= similarity_threshold:
+                candidates.append({
+                    "entity_id": entity["entity_id"],
+                    "entity_name": entity["entity_name"],
+                    "properties": entity["properties"],
+                    "score": best_score
+                })
+        
+        # Step 3: Sort by score (descending) and return
+        candidates.sort(key=lambda x: x["score"], reverse=True)
+        return candidates
     
     def _fallback_string_similarity(
         self,
@@ -258,16 +281,16 @@ class EntityDeduplication:
         entity_name: str,
         similarity_threshold: float = 0.70
     ) -> List[Dict[str, Any]]:
-        """Fallback string similarity using Python's SequenceMatcher."""
-        query = """
-        MATCH (n {user_id: $user_id, type: $entity_type})
+        """Fallback string similarity using Python's SequenceMatcher with label matching."""
+        query = f"""
+        MATCH (n:{entity_type} {{user_id: $user_id}})
         RETURN n.id as entity_id,
                n.name as entity_name,
                properties(n) as properties
         LIMIT 50
         """
         
-        result = session.run(query, user_id=user_id, entity_type=entity_type)
+        result = session.run(query, user_id=user_id)
         candidates = []
         
         for record in result:
@@ -295,6 +318,7 @@ class EntityDeduplication:
         Find match based on property overlap.
         
         Same amount + same asset_type = likely same entity
+        OPTIMIZED: Use label matching
         """
         if not entity_properties:
             return None
@@ -307,9 +331,9 @@ class EntityDeduplication:
         if not (amount or asset_type):
             return None
         
-        # Build flexible query
+        # Build flexible query with label matching
         filters = []
-        params = {"user_id": user_id, "entity_type": entity_type}
+        params = {"user_id": user_id}
         
         if amount:
             filters.append("n.amount = $amount")
@@ -327,14 +351,15 @@ class EntityDeduplication:
             return None
         
         where_clause = " AND ".join(filters)
+        match_count = len(filters)  # Number of properties matched
+        
+        # OPTIMIZED: Use label-based matching
         query = f"""
-        MATCH (n {{user_id: $user_id, type: $entity_type}})
+        MATCH (n:{entity_type} {{user_id: $user_id}})
         WHERE {where_clause}
         RETURN n.id as entity_id,
                n.name as entity_name,
-               properties(n) as properties,
-               {len(filters)} as match_count
-        ORDER BY match_count DESC
+               properties(n) as properties
         LIMIT 1
         """
         
@@ -344,7 +369,6 @@ class EntityDeduplication:
             
             if record:
                 # Score based on how many properties matched
-                match_count = record.get("match_count", 0)
                 max_props = 3  # amount, asset_type, source
                 score = min(1.0, match_count / max_props)
                 

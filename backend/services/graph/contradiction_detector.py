@@ -101,26 +101,23 @@ class ContradictionDetector:
         start_total = time.time()
         message_lower = current_message.lower()
         
-        # 1. Check for explicit correction keywords
+        # 1. Check for explicit correction keywords (FAST)
         start = time.time()
         explicit_score = self._check_explicit_keywords(message_lower)
         explicit_time = (time.time() - start) * 1000
         
-        # 2. Check for deprecation keywords
+        # 2. Check for deprecation keywords (FAST)
         start = time.time()
         deprecation_score = self._check_deprecation_keywords(message_lower)
         deprecation_time = (time.time() - start) * 1000
         
-        # 3. LLM-based detection (if available)
+        # 3. Early exit: If keywords already detected correction, skip slow LLM!
+        # NO MORE SLOW LLM CALL - it's taking 3+ seconds and often fails
         llm_score = 0.0
         llm_context = ""
         llm_time = 0.0
-        if self.llm:
-            start = time.time()
-            llm_score, llm_context = self._llm_detect_correction(current_message)
-            llm_time = (time.time() - start) * 1000
         
-        # 4. Graph-based conflict detection
+        # 4. Graph-based conflict detection (MEDIUM)
         start = time.time()
         graph_conflicts = self._detect_graph_conflicts(
             user_id,
@@ -128,13 +125,14 @@ class ContradictionDetector:
         )
         graph_time = (time.time() - start) * 1000
         
-        # 5. Aggregated decision
+        # 5. Aggregated decision - LOWERED THRESHOLD from 0.5 to 0.3!
+        # Now even a single keyword match triggers correction detection
         total_time = (time.time() - start_total) * 1000
-        is_correction = (explicit_score > 0.5 or deprecation_score > 0.5 or 
-                        llm_score > 0.6 or len(graph_conflicts) > 0)
+        is_correction = (explicit_score > 0.3 or deprecation_score > 0.3 or 
+                        len(graph_conflicts) > 0)  # Removed LLM from here
         
         if not is_correction:
-            print(f"[ContradictionDetector] NO correction. Explicit:{explicit_time:.1f}ms Deprecation:{deprecation_time:.1f}ms LLM:{llm_time:.1f}ms Graph:{graph_time:.1f}ms TOTAL:{total_time:.1f}ms")
+            print(f"[ContradictionDetector] NO correction. Explicit:{explicit_time:.1f}ms Deprecation:{deprecation_time:.1f}ms Graph:{graph_time:.1f}ms TOTAL:{total_time:.1f}ms")
             return {
                 "is_correction": False,
                 "confidence": 0.0,
@@ -156,11 +154,11 @@ class ContradictionDetector:
             strategy = "update"
         
         # Aggregate confidence
-        confidence = max(explicit_score, deprecation_score, llm_score)
+        confidence = max(explicit_score, deprecation_score)  # Removed llm_score
         if len(graph_conflicts) > 0:
             confidence = (confidence + 1.0) / 2
         
-        print(f"[ContradictionDetector] ✓ IS CORRECTION! Type:{correction_type} Confidence:{confidence:.2f}. Explicit:{explicit_time:.1f}ms Deprecation:{deprecation_time:.1f}ms LLM:{llm_time:.1f}ms Graph:{graph_time:.1f}ms TOTAL:{total_time:.1f}ms")
+        print(f"[ContradictionDetector] ✓ IS CORRECTION! Type:{correction_type} Confidence:{confidence:.2f}. Explicit:{explicit_time:.1f}ms Deprecation:{deprecation_time:.1f}ms Graph:{graph_time:.1f}ms TOTAL:{total_time:.1f}ms")
         
         return {
             "is_correction": True,
@@ -169,7 +167,7 @@ class ContradictionDetector:
             "strategy": strategy,
             "corrections": graph_conflicts,
             "requires_user_confirmation": confidence < 0.80,
-            "llm_context": llm_context if llm_context else None
+            "llm_context": None  # Removed llm_context
         }
     
     def _check_explicit_keywords(self, message_lower: str) -> float:
@@ -242,47 +240,60 @@ Only return JSON, no other text."""
                     entity_name = entity.get("value")
                     entity_props = entity.get("properties", {})
                     
-                    # Find existing similar entities
-                    query = """
-                    MATCH (existing {user_id: $user_id, type: $entity_type})
-                    WHERE toLower(existing.name) = toLower($entity_name) OR 
-                          toLower(existing.text) = toLower($entity_name)
-                    OPTIONAL MATCH (existing)-[r]-(connected)
-                    RETURN existing, properties(existing) as props, count(r) as relationship_count
-                    LIMIT 5
+                    # OPTIMIZED: Use label matching instead of property matching
+                    # Only check for numeric conflicts (fast rejection)
+                    if "amount" not in entity_props and "value" not in entity_props:
+                        continue  # No numeric values to conflict on, skip
+                    
+                    # Find existing entities with same name and type (FAST query)
+                    query = f"""
+                    MATCH (existing:{entity_type} {{user_id: $user_id}})
+                    WHERE toLower(coalesce(existing.name, existing.text, "")) = toLower($entity_name)
+                    RETURN properties(existing) as props
+                    LIMIT 1
                     """
                     
-                    result = session.run(
-                        query,
-                        user_id=user_id,
-                        entity_type=entity_type,
-                        entity_name=entity_name
-                    )
-                    
-                    for record in result:
+                    try:
+                        result = session.run(
+                            query,
+                            user_id=user_id,
+                            entity_name=entity_name
+                        )
+                        
+                        record = result.single()
+                        if not record:
+                            continue  # No existing entity found
+                        
                         existing_props = record.get("props", {})
                         
-                        # Check for numeric conflicts
-                        for key in ["amount", "value", "count"]:
+                        # Check for numeric conflicts only
+                        for key in ["amount", "value"]:
                             old_val = existing_props.get(key)
                             new_val = entity_props.get(key)
                             
                             if old_val is not None and new_val is not None:
-                                if float(old_val) != float(new_val):
-                                    percent_diff = abs(float(new_val) - float(old_val)) / float(old_val) * 100
-                                    
-                                    conflicts.append({
-                                        "entity": entity_name,
-                                        "entity_type": entity_type,
-                                        "property": key,
-                                        "old_value": old_val,
-                                        "new_value": new_val,
-                                        "percent_diff": round(percent_diff, 2),
-                                        "severity": "high" if percent_diff > 10 else "medium"
-                                    })
+                                try:
+                                    if float(old_val) != float(new_val):
+                                        percent_diff = abs(float(new_val) - float(old_val)) / float(old_val) * 100
+                                        
+                                        conflicts.append({
+                                            "entity": entity_name,
+                                            "entity_type": entity_type,
+                                            "property": key,
+                                            "old_value": old_val,
+                                            "new_value": new_val,
+                                            "percent_diff": round(percent_diff, 2),
+                                            "severity": "high" if percent_diff > 10 else "medium"
+                                        })
+                                        break  # Found conflict, move to next entity
+                                except (ValueError, TypeError):
+                                    continue
+                    except Exception as query_error:
+                        print(f"[ContradictionDetector] Warning: Query error for {entity_type}: {query_error}")
+                        continue
         
         except Exception as e:
-            print(f"[Contradiction] Graph conflict detection error: {e}")
+            print(f"[ContradictionDetector] Graph conflict detection error: {e}")
         
         return conflicts
     

@@ -10,7 +10,7 @@ Supports:
 All extracted text flows through existing LLM extraction and ingestion pipeline.
 """
 
-from typing import Tuple, Optional, Dict, Any
+from typing import Tuple, Optional, Dict, Any, TYPE_CHECKING
 import os
 import io
 from pathlib import Path
@@ -29,6 +29,9 @@ try:
     from PIL import Image
 except ImportError:
     Image = None
+
+if TYPE_CHECKING:
+    from PIL.Image import Image as PILImage
 
 try:
     from paddleocr import PaddleOCR
@@ -446,7 +449,7 @@ class TextExtractor:
     
     # ── OCR Helper Method ───────────────────────────────────────────────────
     
-    def _run_ocr_on_image(self, image: Image.Image) -> str:
+    def _run_ocr_on_image(self, image: "PILImage") -> str:
         """
         Run PaddleOCR on a PIL image and extract text.
         
