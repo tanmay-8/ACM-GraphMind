@@ -1,7 +1,8 @@
 """
-Answer Generator - Generate grounded answers from retrieved context.
+Answer Generator - Generate grounded answers from retrieved context with decomposition-aware prompting.
 
 Uses LLM to generate answers based on graph and vector context.
+Leverages query decomposition for more targeted and accurate responses.
 """
 
 import os

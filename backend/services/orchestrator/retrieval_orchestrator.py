@@ -1,4 +1,14 @@
 """Retrieval orchestrator with reciprocal rank fusion (RRF) for hybrid context.
+"""
+Retrieval Orchestrator - Coordinates query decomposition, retrieval, and answer generation.
+
+Flow:
+1. Decompose query into logical components
+2. Execute decomposed sub-queries in parallel/sequence
+3. Fuse results intelligently based on decomposition
+4. Assemble enriched context
+5. Generate answer using LLM with source citations
+6. Apply deferred reinforcement
 
 Optimizations:
 - Parallel graph + vector retrieval (asyncio for true async concurrency)
@@ -15,6 +25,7 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from config.settings import Settings
 from services.graph.retrieval import GraphRetrieval
+from services.graph.query_decomposition import QueryDecomposition, QueryIntent
 from services.llm.answer_generator import AnswerGenerator
 from services.vector.retrieval import VectorRetrieval
 from services.vector.milvus_service import get_milvus_service
@@ -148,6 +159,7 @@ class RetrievalOrchestrator:
         retrieval_ms = graph_query_ms + vector_search_ms + context_assembly_ms
 
         metrics = {
+            "decomposition_ms": round(decomposition_ms, 2),
             "graph_query_ms": round(graph_query_ms, 2),
             "vector_search_ms": round(vector_search_ms, 2),
             "context_assembly_ms": round(context_assembly_ms, 2),
