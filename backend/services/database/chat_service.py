@@ -85,6 +85,8 @@ class ChatService:
         content: str,
         intent: Optional[str] = None,
         neo4j_message_id: Optional[str] = None,
+        graph_query_ms: Optional[float] = None,
+        vector_search_ms: Optional[float] = None,
         retrieval_time_ms: Optional[float] = None,
         llm_generation_time_ms: Optional[float] = None,
         nodes_retrieved: Optional[int] = None,
@@ -101,6 +103,8 @@ class ChatService:
             content: Message text
             intent: Optional intent classification
             neo4j_message_id: Optional Neo4j Message node ID
+            graph_query_ms: Optional graph retrieval time
+            vector_search_ms: Optional vector retrieval time
             retrieval_time_ms: Optional retrieval time
             llm_generation_time_ms: Optional LLM generation time
             nodes_retrieved: Optional count of retrieved nodes
@@ -115,10 +119,10 @@ class ChatService:
             cur.execute("""
                 INSERT INTO chat_messages (
                     session_id, user_id, role, content, intent,
-                    neo4j_message_id, retrieval_time_ms, llm_generation_time_ms,
+                    neo4j_message_id, graph_query_ms, vector_search_ms, retrieval_time_ms, llm_generation_time_ms,
                     nodes_retrieved, memory_storage, memory_citations
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id, session_id, role, content, created_at
             """, (
                 session_id,
@@ -127,6 +131,8 @@ class ChatService:
                 content,
                 intent if isinstance(intent, str) else Json(intent) if intent is not None else None,
                 neo4j_message_id,
+                graph_query_ms,
+                vector_search_ms,
                 retrieval_time_ms,
                 llm_generation_time_ms,
                 nodes_retrieved,
@@ -151,7 +157,7 @@ class ChatService:
             cur.execute("""
                 SELECT 
                     id, session_id, user_id, role, content, intent,
-                    created_at, retrieval_time_ms, llm_generation_time_ms,
+                    created_at, graph_query_ms, vector_search_ms, retrieval_time_ms, llm_generation_time_ms,
                     nodes_retrieved, memory_storage, memory_citations
                 FROM chat_messages
                 WHERE session_id = %s
@@ -168,7 +174,7 @@ class ChatService:
             cur.execute("""
                 SELECT 
                     id, session_id, role, content, intent, created_at,
-                    retrieval_time_ms, llm_generation_time_ms
+                    graph_query_ms, vector_search_ms, retrieval_time_ms, llm_generation_time_ms
                 FROM chat_messages
                 WHERE user_id = %s
                 ORDER BY created_at DESC

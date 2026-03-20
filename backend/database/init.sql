@@ -59,6 +59,8 @@ CREATE TABLE chat_messages (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     
     -- Metrics (for assistant messages)
+    graph_query_ms FLOAT,
+    vector_search_ms FLOAT,
     retrieval_time_ms FLOAT,
     llm_generation_time_ms FLOAT,
     nodes_retrieved INTEGER,

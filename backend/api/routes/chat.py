@@ -116,6 +116,8 @@ async def chat_endpoint(
     
     response_data = None
     assistant_content = None
+    graph_query_time = None
+    vector_search_time = None
     retrieval_time = None
     llm_generation_time = None
     nodes_retrieved = 0
@@ -147,6 +149,8 @@ async def chat_endpoint(
         )
         
         assistant_content = answer
+        graph_query_time = metrics.get("graph_query_ms", 0)
+        vector_search_time = metrics.get("vector_search_ms", 0)
         retrieval_time = metrics.get("retrieval_ms", 0)
         llm_generation_time = metrics.get("llm_generation_ms", 0)
         nodes_retrieved = len(memory_citations) if memory_citations else 0
@@ -175,6 +179,8 @@ async def chat_endpoint(
         )
         
         assistant_content = answer
+        graph_query_time = metrics.get("graph_query_ms", 0)
+        vector_search_time = metrics.get("vector_search_ms", 0)
         retrieval_time = metrics.get("retrieval_ms", 0)
         llm_generation_time = metrics.get("llm_generation_ms", 0)
         nodes_retrieved = len(memory_citations) if memory_citations else 0
@@ -199,6 +205,8 @@ async def chat_endpoint(
         content=assistant_content or "No response generated.",
         intent=intent,
         neo4j_message_id=None,
+        graph_query_ms=graph_query_time,
+        vector_search_ms=vector_search_time,
         retrieval_time_ms=retrieval_time,
         llm_generation_time_ms=llm_generation_time,
         nodes_retrieved=nodes_retrieved,
@@ -228,6 +236,8 @@ class MessageResponse(BaseModel):
     content: str
     intent: Optional[str]
     created_at: Optional[str]
+    graph_query_ms: Optional[float]
+    vector_search_ms: Optional[float]
     retrieval_time_ms: Optional[float]
     llm_generation_time_ms: Optional[float]
     nodes_retrieved: Optional[int]
@@ -328,6 +338,8 @@ async def get_session_messages(
             content=msg["content"],
             intent=msg.get("intent"),
             created_at=msg["created_at"].isoformat() if msg.get("created_at") else None,
+            graph_query_ms=msg.get("graph_query_ms"),
+            vector_search_ms=msg.get("vector_search_ms"),
             retrieval_time_ms=msg.get("retrieval_time_ms"),
             llm_generation_time_ms=msg.get("llm_generation_time_ms"),
             nodes_retrieved=msg.get("nodes_retrieved"),

@@ -401,8 +401,8 @@ export default function Chat() {
         setMessages((history || []).map((msg: any) => ({
           id: msg.id, role: msg.role, content: msg.content,
           timestamp: msg.created_at ? new Date(msg.created_at) : new Date(),
-          graph_query_ms: undefined,
-          vector_search_ms: undefined,
+          graph_query_ms: msg.graph_query_ms ?? undefined,
+          vector_search_ms: msg.vector_search_ms ?? undefined,
           retrieval_ms: msg.retrieval_time_ms ?? undefined,
           llm_generation_ms: msg.llm_generation_time_ms ?? undefined,
           citations: Array.isArray(msg.memory_citations) ? msg.memory_citations : undefined,
@@ -622,39 +622,79 @@ export default function Chat() {
                   msg.retrieval_ms !== undefined
                 ) && (
                   <div
-                    className="flex items-center gap-4 mt-2.5 pt-2.5"
-                    style={{ borderTop: '1px solid rgba(255,255,255,0.04)', fontSize: '0.6875rem', color: 'var(--text-ghost)' }}
+                    className="flex items-center flex-wrap gap-2 mt-2.5 pt-2.5"
+                    style={{ borderTop: '1px solid rgba(255,255,255,0.06)', fontSize: '0.6875rem', color: 'var(--text-muted)' }}
                   >
                     {msg.graph_query_ms !== undefined && (
-                      <span className="flex items-center gap-1">
+                      <span
+                        className="flex items-center gap-1.5"
+                        style={{
+                          padding: '0.2rem 0.45rem',
+                          borderRadius: '999px',
+                          background: 'rgba(255,255,255,0.055)',
+                          border: '1px solid rgba(255,255,255,0.12)',
+                          color: 'var(--text-primary)'
+                        }}
+                      >
                         <svg width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                           <circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" />
                         </svg>
-                        {Math.round(msg.graph_query_ms)}ms graph
+                        <span style={{ opacity: 0.85 }}>Graph</span>
+                        <span style={{ fontWeight: 600 }}>{Math.round(msg.graph_query_ms)}ms</span>
                       </span>
                     )}
                     {msg.vector_search_ms !== undefined && (
-                      <span className="flex items-center gap-1">
+                      <span
+                        className="flex items-center gap-1.5"
+                        style={{
+                          padding: '0.2rem 0.45rem',
+                          borderRadius: '999px',
+                          background: 'rgba(255,255,255,0.055)',
+                          border: '1px solid rgba(255,255,255,0.12)',
+                          color: 'var(--text-primary)'
+                        }}
+                      >
                         <svg width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                           <path d="M4 6h16M4 12h16M4 18h16" />
                         </svg>
-                        {Math.round(msg.vector_search_ms)}ms vector
+                        <span style={{ opacity: 0.85 }}>Vector</span>
+                        <span style={{ fontWeight: 600 }}>{Math.round(msg.vector_search_ms)}ms</span>
                       </span>
                     )}
                     {msg.llm_generation_ms !== undefined && (
-                      <span className="flex items-center gap-1">
+                      <span
+                        className="flex items-center gap-1.5"
+                        style={{
+                          padding: '0.2rem 0.45rem',
+                          borderRadius: '999px',
+                          background: 'rgba(255,255,255,0.055)',
+                          border: '1px solid rgba(255,255,255,0.12)',
+                          color: 'var(--text-primary)'
+                        }}
+                      >
                         <svg width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                           <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
                         </svg>
-                        {Math.round(msg.llm_generation_ms)}ms LLM
+                        <span style={{ opacity: 0.85 }}>LLM</span>
+                        <span style={{ fontWeight: 600 }}>{Math.round(msg.llm_generation_ms)}ms</span>
                       </span>
                     )}
                     {msg.graph_query_ms === undefined && msg.vector_search_ms === undefined && msg.retrieval_ms !== undefined && (
-                      <span className="flex items-center gap-1">
+                      <span
+                        className="flex items-center gap-1.5"
+                        style={{
+                          padding: '0.2rem 0.45rem',
+                          borderRadius: '999px',
+                          background: 'rgba(255,255,255,0.055)',
+                          border: '1px solid rgba(255,255,255,0.12)',
+                          color: 'var(--text-primary)'
+                        }}
+                      >
                         <svg width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                           <circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" />
                         </svg>
-                        {Math.round(msg.retrieval_ms)}ms retrieval
+                        <span style={{ opacity: 0.85 }}>Retrieval</span>
+                        <span style={{ fontWeight: 600 }}>{Math.round(msg.retrieval_ms)}ms</span>
                       </span>
                     )}
                   </div>
