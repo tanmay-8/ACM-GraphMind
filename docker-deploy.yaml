@@ -108,7 +108,7 @@ services:
       - graphmind-network
 
   server:
-    image: python:3.10-slim
+    image: python:3.14-slim
     container_name: graphmind-server
     working_dir: /app/backend
     command: >
