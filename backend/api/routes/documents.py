@@ -29,6 +29,7 @@ from services.orchestrator.memory_orchestrator import MemoryOrchestrator
 from services.auth.auth_service import auth_service
 from services.storage.s3_storage import s3_storage
 from services.database.user_service import UserService
+from services.database.chat_service import ChatService
 
 router = APIRouter()
 
@@ -36,6 +37,51 @@ router = APIRouter()
 llm_extractor = LLMExtractor()
 memory_orchestrator = MemoryOrchestrator()
 user_service = UserService()
+chat_service = ChatService()
+
+
+def _log_document_event_to_chat(
+    pg_user_id: str,
+    document_name: str,
+    text_length: int,
+    ingestion_stats: dict
+) -> None:
+    """Best-effort chat entry for uploaded/ingested documents."""
+    try:
+        session = chat_service.get_or_create_session(pg_user_id)
+        if not session:
+            return
+
+        content = (
+            f"Document uploaded and ingested: {document_name}\n"
+            f"- Text length: {text_length} chars\n"
+            f"- Nodes created: {ingestion_stats.get('nodes_created', 0)}\n"
+            f"- Relationships created: {ingestion_stats.get('relationships_created', 0)}\n"
+            f"- Facts created: {ingestion_stats.get('facts_created', 0)}"
+        )
+
+        chat_service.add_message(
+            session_id=session["id"],
+            user_id=pg_user_id,
+            role="assistant",
+            content=content,
+            intent="MEMORY",
+            neo4j_message_id=None,
+            nodes_retrieved=0,
+            memory_storage={
+                "source": "document_upload",
+                "document_name": document_name,
+                "text_length": text_length,
+                "nodes_created": ingestion_stats.get("nodes_created", 0),
+                "relationships_created": ingestion_stats.get("relationships_created", 0),
+                "facts_created": ingestion_stats.get("facts_created", 0),
+                "chunks_indexed": ingestion_stats.get("chunks_indexed", 0),
+            },
+            memory_citations=None,
+        )
+    except Exception as e:
+        # Chat logging failure must not fail document ingestion.
+        print(f"Warning: failed to log document event to chat history: {e}")
 
 
 # ── Authentication Helper ───────────────────────────────────────────────────
@@ -264,6 +310,13 @@ async def ingest_document(
             source_type="document"
         )
 
+        _log_document_event_to_chat(
+            pg_user_id=pg_user_id,
+            document_name=request.document_name,
+            text_length=len(request.document_text),
+            ingestion_stats=ingestion_stats,
+        )
+
         return DocumentIngestionResponse(
             success=True,
             document_name=request.document_name,
@@ -378,6 +431,13 @@ async def upload_and_ingest_document(
             user_id=neo4j_user_id,
             message=extracted_text,
             source_type="document"
+        )
+
+        _log_document_event_to_chat(
+            pg_user_id=pg_user_id,
+            document_name=filename,
+            text_length=len(extracted_text),
+            ingestion_stats=ingestion_stats,
         )
 
         return DocumentIngestionResponse(
