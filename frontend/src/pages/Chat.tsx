@@ -13,6 +13,7 @@ interface MemoryCitation {
   hop_distance: number | string;
   snippet: string;
   properties: Record<string, any>;
+  source?: 'graph' | 'vector' | 'hybrid';
   score_breakdown?: {
     graph_distance: number;
     recency: number;
@@ -56,12 +57,26 @@ function CitationCard({ c, i }: { c: MemoryCitation; i: number }) {
   const cls = NODE_COLORS[c.node_type] ?? 'bg-zinc-500/15 text-zinc-400 border-zinc-500/20';
   const pct = Math.round(c.retrieval_score * 100);
 
+  // Determine source badge color and label
+  const sourceColor = c.source === 'graph' 
+    ? 'bg-purple-500/20 text-purple-300 border-purple-500/30' 
+    : c.source === 'vector' 
+    ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30'
+    : 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30';
+  
+  const sourceLabel = c.source === 'graph' 
+    ? 'Graph' 
+    : c.source === 'vector' 
+    ? 'Vector DB' 
+    : 'Hybrid';
+
   return (
     <div className="rounded-lg border border-white/[0.06] overflow-hidden text-xs">
       <button onClick={() => setOpen(v => !v)}
         className="w-full flex items-center gap-2 px-3 py-2 bg-white/[0.02] hover:bg-white/[0.04] transition-colors text-left">
         <span className="text-white/20 w-4 text-right flex-shrink-0">{i + 1}</span>
         <span className={`px-1.5 py-0.5 rounded-md border text-[10px] font-semibold flex-shrink-0 ${cls}`}>{c.node_type}</span>
+        <span className={`px-1.5 py-0.5 rounded-md border text-[10px] font-semibold flex-shrink-0 ${sourceColor}`}>{sourceLabel}</span>
         <span className="flex-1 truncate text-white/50">{c.snippet || '—'}</span>
         <div className="flex items-center gap-1.5 flex-shrink-0">
           <div className="w-14 h-1 bg-white/10 rounded-full overflow-hidden">
