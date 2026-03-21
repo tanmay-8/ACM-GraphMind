@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from api.routes import health, chat, auth, memory, documents
+from api.routes import health, chat, auth, memory, documents, sidebar
 from config.settings import settings
 from services.graph.memory_decay import MemoryDecayService
 from services.graph.community_refresh import CommunityRefreshService
@@ -78,6 +78,7 @@ app.include_router(auth.router, prefix="/auth", tags=["authentication"])
 app.include_router(memory.router, prefix="/memory", tags=["memory"])
 app.include_router(documents.router, tags=["documents"])
 app.include_router(chat.router, tags=["chat"])
+app.include_router(sidebar.router, tags=["sidebar"])
 
 
 @app.get("/")

@@ -14,7 +14,7 @@ interface UploadState {
   fileName: string | null;
 }
 
-interface UploadedFile {
+export interface UploadedFile {
   name: string;
   timestamp: Date;
   size: number;

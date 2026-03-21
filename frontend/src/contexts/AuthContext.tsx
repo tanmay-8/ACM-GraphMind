@@ -20,28 +20,27 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<User | null>(() => {
+    // Try to load user from localStorage on init
+    const stored = localStorage.getItem('user');
+    return stored ? JSON.parse(stored) : null;
+  });
   const [token, setToken] = useState<string | null>(localStorage.getItem('token'));
-  const [isLoading, setIsLoading] = useState(() => !!localStorage.getItem('token'));
+  const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Load user on mount if token exists
+  // If we have a token but no user, try to load user from localStorage
   useEffect(() => {
-    const loadUser = async () => {
-      if (token) {
+    if (token && !user) {
+      const stored = localStorage.getItem('user');
+      if (stored) {
         try {
-          const userData = await authAPI.getCurrentUser();
-          setUser(userData);
+          setUser(JSON.parse(stored));
         } catch (err) {
-          console.error('Failed to load user:', err);
-          localStorage.removeItem('token');
-          setToken(null);
+          console.error('Failed to parse stored user:', err);
         }
       }
-      setIsLoading(false);
-    };
-
-    loadUser();
+    }
   }, [token]);
 
   const login = async (email: string, password: string) => {
@@ -50,13 +49,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setIsLoading(true);
       const response = await authAPI.login(email, password);
       
-      localStorage.setItem('token', response.access_token);
-      setToken(response.access_token);
-      setUser({
+      const userData = {
         user_id: response.user_id,
         email: response.email,
         full_name: response.full_name,
-      });
+      };
+      
+      localStorage.setItem('token', response.access_token);
+      localStorage.setItem('user', JSON.stringify(userData));
+      setToken(response.access_token);
+      setUser(userData);
     } catch (err: any) {
       const message = err.response?.data?.detail || 'Login failed';
       setError(message);
@@ -72,13 +74,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setIsLoading(true);
       const response = await authAPI.signup(email, password, fullName);
       
-      localStorage.setItem('token', response.access_token);
-      setToken(response.access_token);
-      setUser({
+      const userData = {
         user_id: response.user_id,
         email: response.email,
         full_name: response.full_name,
-      });
+      };
+      
+      localStorage.setItem('token', response.access_token);
+      localStorage.setItem('user', JSON.stringify(userData));
+      setToken(response.access_token);
+      setUser(userData);
     } catch (err: any) {
       const message = err.response?.data?.detail || 'Signup failed';
       setError(message);
@@ -90,6 +95,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const logout = () => {
     localStorage.removeItem('token');
+    localStorage.removeItem('user');
     setToken(null);
     setUser(null);
   };

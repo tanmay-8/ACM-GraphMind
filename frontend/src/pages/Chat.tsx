@@ -1,10 +1,11 @@
 import React, { useState, useRef, useEffect } from "react";
+import Sidebar from "../components/Sidebar";
+import { userAPI } from "../lib/userAPI";
 import { useAuth } from "../contexts/AuthContext";
 import { chatAPI, type RetrievalMode } from "../lib/api";
 import { useNavigate } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import DocumentUpload from "../components/DocumentUpload";
 
 // -- Types ---------------------------------------------------------
 interface MemoryCitation {
@@ -486,191 +487,6 @@ function SourcesPanel({ citations }: { citations: MemoryCitation[] }) {
   );
 }
 
-// -- Document upload panel ----------------------------------------
-function DocUploadPanel({
-  onSuccess,
-  onError,
-  onStart,
-  onClose,
-}: {
-  onSuccess: (data: any) => void;
-  onError: (e: string) => void;
-  onStart: () => void;
-  onClose: () => void;
-}) {
-  return (
-    <div
-      className="animate-scale-in rounded-2xl p-4 space-y-3"
-      style={{
-        background: "var(--bg-raised)",
-        border: "1px solid rgba(255,255,255,0.07)",
-      }}
-    >
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div
-            style={{
-              width: 28,
-              height: 28,
-              borderRadius: 8,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              background:
-                "linear-gradient(135deg,rgba(139,92,246,0.22),rgba(99,102,241,0.12))",
-              border: "1px solid rgba(139,92,246,0.25)",
-            }}
-          >
-            <svg
-              width="13"
-              height="13"
-              fill="none"
-              stroke="rgba(167,139,250,0.85)"
-              strokeWidth="2"
-              viewBox="0 0 24 24"
-            >
-              <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
-              <polyline points="14 2 14 8 20 8" />
-              <line x1="12" y1="18" x2="12" y2="12" />
-              <line x1="9" y1="15" x2="15" y2="15" />
-            </svg>
-          </div>
-          <div>
-            <p
-              style={{
-                fontSize: "0.8125rem",
-                fontWeight: 600,
-                color: "var(--text-primary)",
-              }}
-            >
-              Upload Document
-            </p>
-            <p style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>
-              PDF, images - extracted into your memory graph
-            </p>
-          </div>
-        </div>
-        <button
-          onClick={onClose}
-          className="btn-ghost"
-          style={{ padding: "0.3rem", border: "none", borderRadius: "0.5rem" }}
-        >
-          <svg
-            width="14"
-            height="14"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            viewBox="0 0 24 24"
-          >
-            <line x1="18" y1="6" x2="6" y2="18" />
-            <line x1="6" y1="6" x2="18" y2="18" />
-          </svg>
-        </button>
-      </div>
-
-      <div
-        style={{
-          borderTop: "1px solid rgba(255,255,255,0.05)",
-          paddingTop: "0.75rem",
-        }}
-      >
-        <DocumentUpload
-          onUploadSuccess={onSuccess}
-          onUploadError={onError}
-          onUploadStart={onStart}
-        />
-      </div>
-    </div>
-  );
-}
-
-// -- Upload success toast -----------------------------------------
-function UploadSuccess({
-  data,
-  onDismiss,
-}: {
-  data: any;
-  onDismiss: () => void;
-}) {
-  return (
-    <div
-      className="animate-scale-in rounded-2xl p-3.5 flex items-start gap-3"
-      style={{
-        background: "rgba(45,212,191,0.07)",
-        border: "1px solid rgba(45,212,191,0.18)",
-      }}
-    >
-      <div
-        style={{
-          width: 28,
-          height: 28,
-          borderRadius: 8,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          background: "rgba(45,212,191,0.15)",
-          flexShrink: 0,
-        }}
-      >
-        <svg
-          width="14"
-          height="14"
-          fill="none"
-          stroke="#2dd4bf"
-          strokeWidth="2.5"
-          viewBox="0 0 24 24"
-        >
-          <path d="M20 6L9 17l-5-5" />
-        </svg>
-      </div>
-      <div className="flex-1 min-w-0">
-        <p style={{ fontSize: "0.8125rem", fontWeight: 600, color: "#2dd4bf" }}>
-          {data.document_name}
-        </p>
-        <div className="flex gap-4 mt-1.5 flex-wrap">
-          {[
-            ["Facts", data.extraction_stats?.facts_extracted || 0],
-            ["Entities", data.extraction_stats?.entities_extracted || 0],
-            ["Relations", data.extraction_stats?.relationships_extracted || 0],
-          ].map(([lbl, val]) => (
-            <span
-              key={lbl as string}
-              style={{ fontSize: "0.7rem", color: "rgba(45,212,191,0.65)" }}
-            >
-              <span style={{ color: "#2dd4bf", fontWeight: 600 }}>{val}</span>{" "}
-              {lbl}
-            </span>
-          ))}
-        </div>
-      </div>
-      <button
-        onClick={onDismiss}
-        style={{
-          flexShrink: 0,
-          background: "none",
-          border: "none",
-          cursor: "pointer",
-          color: "rgba(45,212,191,0.4)",
-          padding: 4,
-        }}
-      >
-        <svg
-          width="12"
-          height="12"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2.5"
-          viewBox="0 0 24 24"
-        >
-          <line x1="18" y1="6" x2="6" y2="18" />
-          <line x1="6" y1="6" x2="18" y2="18" />
-        </svg>
-      </button>
-    </div>
-  );
-}
-
 // -- Empty state prompts ------------------------------------------
 const SAMPLE_PROMPTS = [
   { icon: "💹", text: "I invested ₹50,000 in HDFC mutual fund" },
@@ -687,10 +503,15 @@ export default function Chat() {
   const [input, setInput] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
-  const [showDocUpload, setShowDocUpload] = useState(false);
-  const [uploadSuccess, setUploadSuccess] = useState<any>(null);
-  const [uploadError, setUploadError] = useState<string | null>(null);
-  const [isUploading, setIsUploading] = useState(false);
+  const [financialSummary, setFinancialSummary] = useState<{ 
+    totalInvested: number; 
+    totalAssets: number; 
+    netWorth: number; 
+    banks: { name: string; count: number }[];
+    investments: { name: string; amount: number; type: string }[];
+    isEmpty: boolean;
+  }>({ totalInvested: 0, totalAssets: 0, netWorth: 0, banks: [], investments: [], isEmpty: true });
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [retrievalMode, setRetrievalMode] = useState<RetrievalMode>("auto");
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -709,6 +530,29 @@ export default function Chat() {
     ta.style.height = Math.min(ta.scrollHeight, 160) + "px";
   };
   useEffect(resizeTextarea, [input]);
+
+  // Fetch sidebar data - wait for user to be authenticated
+  useEffect(() => {
+    const fetchSidebarData = async () => {
+      if (!user) {
+        console.log('⏳ Waiting for user authentication... Sidebar fetch skipped');
+        return;
+      }
+      
+      console.log('🔄 Sidebar: User authenticated, starting fetch for:', user.email);
+      
+      try {
+        console.log('📥 Sidebar: Fetching financial summary...');
+        const summary = await userAPI.getFinancialSummary();
+        console.log('✅ Sidebar: Got financial summary:', summary);
+        setFinancialSummary(summary);
+      } catch (error) {
+        console.error('❌ Sidebar: Error fetching financial summary:', error);
+      }
+    };
+    
+    fetchSidebarData();
+  }, [user]);
 
   useEffect(() => {
     const load = async () => {
@@ -799,40 +643,12 @@ export default function Chat() {
     }
   };
 
-  const handleUploadSuccess = (data: any) => {
-    setUploadSuccess({
-      document_name: data.document_name || "Document",
-      extraction_stats: {
-        facts_extracted:
-          data.extraction_stats?.facts_extracted ||
-          data.llm_extraction?.facts?.length ||
-          0,
-        entities_extracted:
-          data.extraction_stats?.entities_extracted ||
-          data.llm_extraction?.entities?.length ||
-          0,
-        relationships_extracted:
-          data.extraction_stats?.relationships_extracted ||
-          data.llm_extraction?.relationships?.length ||
-          0,
-      },
-    });
-    setUploadError(null);
-    setIsUploading(false);
-    setTimeout(() => setUploadSuccess(null), 6000);
-  };
-
   const empty = messages.length === 0 && !isLoadingHistory;
 
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        height: "100vh",
-        background: "var(--bg-base)",
-      }}
-    >
+    <div style={{ display: "flex", height: "100vh", background: "var(--bg-base)" }}>
+      <Sidebar financialSummary={financialSummary} open={sidebarOpen} onToggle={() => setSidebarOpen((v) => !v)} />
+      <div style={{ flex: 1, marginLeft: sidebarOpen ? 320 : 0, display: "flex", flexDirection: "column", height: "100vh", transition: "margin-left 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)" }}>
       <header
         className="flex items-center justify-between shrink-0 z-10"
         style={{
@@ -1339,75 +1155,6 @@ export default function Chat() {
             gap: "0.75rem",
           }}
         >
-          {showDocUpload && (
-            <DocUploadPanel
-              onSuccess={(data) => {
-                handleUploadSuccess(data);
-                setShowDocUpload(false);
-              }}
-              onError={(e) => {
-                setUploadError(e);
-                setIsUploading(false);
-              }}
-              onStart={() => setIsUploading(true)}
-              onClose={() => setShowDocUpload(false)}
-            />
-          )}
-
-          {uploadSuccess && (
-            <UploadSuccess
-              data={uploadSuccess}
-              onDismiss={() => setUploadSuccess(null)}
-            />
-          )}
-
-          {uploadError && (
-            <div
-              className="animate-scale-in rounded-xl px-3.5 py-2.5 flex items-center gap-2"
-              style={{
-                background: "rgba(239,68,68,0.07)",
-                border: "1px solid rgba(239,68,68,0.18)",
-                fontSize: "0.75rem",
-                color: "#f87171",
-              }}
-            >
-              <svg
-                width="13"
-                height="13"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                viewBox="0 0 24 24"
-              >
-                <circle cx="12" cy="12" r="10" />
-                <line x1="12" y1="8" x2="12" y2="12" />
-                <line x1="12" y1="16" x2="12.01" y2="16" />
-              </svg>
-              {uploadError}
-              <button
-                onClick={() => setUploadError(null)}
-                style={{
-                  marginLeft: "auto",
-                  background: "none",
-                  border: "none",
-                  cursor: "pointer",
-                  color: "currentColor",
-                }}
-              >
-                <svg
-                  width="11"
-                  height="11"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.5"
-                  viewBox="0 0 24 24"
-                >
-                  <line x1="18" y1="6" x2="6" y2="18" />
-                  <line x1="6" y1="6" x2="18" y2="18" />
-                </svg>
-              </button>
-            </div>
-          )}
 
           <form
             onSubmit={(e) => handleSend(undefined, e)}
@@ -1429,38 +1176,6 @@ export default function Chat() {
               (e.currentTarget as HTMLFormElement).style.boxShadow = "none";
             }}
           >
-            <button
-              type="button"
-              onClick={() => setShowDocUpload((v) => !v)}
-              title="Upload document"
-              className="shrink-0 flex items-center justify-center rounded-lg transition-all duration-150"
-              style={{
-                width: 32,
-                height: 32,
-                background: "none",
-                border: "none",
-                cursor: "pointer",
-                color: showDocUpload
-                  ? "rgba(167,139,250,0.8)"
-                  : "var(--text-ghost)",
-              }}
-              onMouseEnter={(e) =>
-                (e.currentTarget.style.background = "rgba(139,92,246,0.1)")
-              }
-              onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
-            >
-              <svg
-                width="16"
-                height="16"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                viewBox="0 0 24 24"
-              >
-                <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" />
-              </svg>
-            </button>
-
             <select
               value={retrievalMode}
               onChange={(e) =>
@@ -1511,7 +1226,7 @@ export default function Chat() {
 
             <button
               type="submit"
-              disabled={isSending || !input.trim() || isUploading}
+              disabled={isSending || !input.trim()}
               className="shrink-0 flex items-center justify-center rounded-xl transition-all duration-150"
               style={{
                 width: 34,
@@ -1553,6 +1268,7 @@ export default function Chat() {
             independently.
           </p>
         </div>
+      </div>
       </div>
     </div>
   );

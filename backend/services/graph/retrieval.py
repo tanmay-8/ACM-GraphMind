@@ -772,6 +772,133 @@ class GraphRetrieval:
 
         return relevance_score
 
+    def _query_total_invested(self, user_id: str) -> float:
+        """Query total invested amount from all transactions in the graph."""
+        if not self.driver:
+            return 0.0
+        
+        try:
+            with self.driver.session() as session:
+                # Try matching with user's transactions
+                query = """
+                MATCH (t:Transaction {user_id: $user_id})
+                RETURN coalesce(sum(t.amount), 0) as total
+                """
+                print(f"[💰 Query] Searching Transactions for user_id={user_id}")
+                result = session.run(query, user_id=user_id)
+                record = result.single()
+                total = float(record["total"]) if record and record["total"] else 0.0
+                print(f"[💰 Result] Total invested for {user_id}: ₹{total}")
+                return total
+        except Exception as e:
+            print(f"[❌ Error] querying total invested for {user_id}: {e}")
+            return 0.0
+
+    def _query_banks(self, user_id: str) -> List[Dict[str, Any]]:
+        """Query bank entities from the graph."""
+        if not self.driver:
+            return []
+        
+        try:
+            with self.driver.session() as session:
+                # Look for Asset nodes with bank names (HDFC, SBI, ICICI, etc.)
+                query = """
+                MATCH (a:Asset {user_id: $user_id})
+                WHERE toLower(a.name) CONTAINS 'bank' 
+                   OR toLower(a.name) IN ['sbi', 'hdfc', 'icici', 'axis', 'bob', 'union', 'pnb', 'yes bank', 'kotak', 'hdfc mutual fund']
+                RETURN distinct a.name as name
+                ORDER BY a.name
+                LIMIT 10
+                """
+                result = session.run(query, user_id=user_id)
+                banks = {}
+                for record in result:
+                    bank_name = record.get("name", "Unknown Bank")
+                    if bank_name and bank_name not in banks:
+                        banks[bank_name] = 0
+                    if bank_name:
+                        banks[bank_name] += 1
+                
+                bank_list = [{"name": name, "count": count} for name, count in banks.items()]
+                print(f"Banks found for user {user_id}: {bank_list}")
+                return bank_list
+        except Exception as e:
+            print(f"Error querying banks: {e}")
+            return []
+
+    def _query_investments(self, user_id: str) -> List[Dict[str, Any]]:
+        """Query investments (assets) from the graph."""
+        if not self.driver:
+            return []
+        
+        try:
+            with self.driver.session() as session:
+                # First try: Assets linked to transactions
+                query = """
+                MATCH (t:Transaction {user_id: $user_id})-[:AFFECTS_ASSET]->(a:Asset {user_id: $user_id})
+                WITH a, sum(t.amount) as invested_amount
+                WHERE invested_amount > 0
+                RETURN distinct 
+                    a.name as name,
+                    invested_amount as amount
+                ORDER BY amount DESC
+                LIMIT 20
+                """
+                result = session.run(query, user_id=user_id)
+                investments = []
+                seen = set()
+                
+                for record in result:
+                    name = record.get("name")
+                    if not name:
+                        continue
+                    amount = record.get("amount", 0)
+                    
+                    if name not in seen and amount > 0:
+                        investments.append({
+                            "name": name,
+                            "type": "investment",
+                            "amount": float(amount) if amount else 0.0
+                        })
+                        seen.add(name)
+                
+                if investments:
+                    print(f"Investments found for user {user_id}: {len(investments)} assets")
+                    return investments
+                
+                # Fallback: Try to get all assets for this user
+                query_fallback = """
+                MATCH (a:Asset {user_id: $user_id})
+                RETURN distinct 
+                    a.name as name,
+                    coalesce(a.value, a.amount, 0) as amount
+                ORDER BY amount DESC
+                LIMIT 10
+                """
+                result = session.run(query_fallback, user_id=user_id)
+                for record in result:
+                    name = record.get("name")
+                    if not name:
+                        continue
+                    amount = record.get("amount", 0)
+                    
+                    if name not in seen and amount > 0:
+                        investments.append({
+                            "name": name,
+                            "type": "asset",
+                            "amount": float(amount) if amount else 0.0
+                        })
+                        seen.add(name)
+                
+                print(f"Fallback: Found {len(investments)} assets for user {user_id}")
+                return investments
+                
+        except Exception as e:
+            print(f"Error querying investments: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
+
     def close(self):
         """Close Neo4j connection."""
         if self.driver:
